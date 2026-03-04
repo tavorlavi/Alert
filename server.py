@@ -406,9 +406,11 @@ client = TelegramClient("session", api_id, api_hash)
 # ==========================
 # Pikud HaOref Polling Logic
 # ==========================
+oref_error_logged = False  # Log Oref geo-block warning only once
+
 async def fetch_oref_alerts():
     """Fetch currently active alerts from Pikud HaOref."""
-    global oref_active_alerts, oref_last_alert_ids
+    global oref_active_alerts, oref_last_alert_ids, oref_error_logged
     
     async with httpx.AsyncClient(verify=False, timeout=10) as http_client:
         # First get cookies
@@ -484,9 +486,12 @@ async def fetch_oref_alerts():
                 pass
                 
         except httpx.HTTPError as e:
-            print(f"⚠️ Oref Alerts.json error: {e}")
+            if not oref_error_logged:
+                print(f"⚠️ Oref Alerts.json error: {e}")
         except Exception as e:
-            print(f"⚠️ Oref Alerts.json parse error: {e}")
+            if not oref_error_logged:
+                print(f"⚠️ Oref Alerts.json parse error (Oref blocks non-Israeli IPs): {e}")
+                oref_error_logged = True
 
 
 async def fetch_oref_history():
@@ -561,7 +566,9 @@ async def fetch_oref_history():
                 oref_recent_history = history_items
         
         except Exception as e:
-            print(f"⚠️ Oref History error: {e}")
+            if not oref_error_logged:
+                print(f"⚠️ Oref History error (Oref blocks non-Israeli IPs): {e}")
+                oref_error_logged = True
 
 
 async def oref_polling_loop():
