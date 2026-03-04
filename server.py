@@ -104,27 +104,7 @@ today_messages = []       # ALL messages from the channel today (for display)
 # ==========================
 # Pikud HaOref (Home Front Command) API
 # ==========================
-OREF_ALERTS_URL = "https://www.oref.org.il/warningMessages/alert/Alerts.json"
-OREF_HISTORY_URL = "https://alerts-history.oref.org.il//Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=1"
-OREF_HEADERS = {
-    "Host": "www.oref.org.il",
-    "Connection": "keep-alive",
-    "Content-Type": "application/json",
-    "charset": "utf-8",
-    "X-Requested-With": "XMLHttpRequest",
-    "sec-ch-ua-mobile": "?0",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "sec-ch-ua-platform": '"Windows"',
-    "Accept": "*/*",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-    "Referer": "https://www.oref.org.il/",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-}
+OREF_HISTORY_URL = "https://alerts-history.oref.org.il/Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=3"
 OREF_HISTORY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -406,100 +386,19 @@ client = TelegramClient("session", api_id, api_hash)
 # ==========================
 # Pikud HaOref Polling Logic
 # ==========================
-oref_error_logged = False  # Log Oref geo-block warning only once
+oref_error_logged = False  # Log Oref error only once
+ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered "active"
 
-async def fetch_oref_alerts():
-    """Fetch currently active alerts from Pikud HaOref."""
-    global oref_active_alerts, oref_last_alert_ids, oref_error_logged
+async def fetch_oref_data():
+    """Fetch alert data from Oref history API (works internationally, unlike Alerts.json).
     
-    async with httpx.AsyncClient(verify=False, timeout=10) as http_client:
-        # First get cookies
-        try:
-            await http_client.get("https://www.oref.org.il/", headers=OREF_HEADERS)
-        except Exception:
-            pass
-        
-        try:
-            resp = await http_client.get(
-                OREF_ALERTS_URL + f"?{int(datetime.now().timestamp())}",
-                headers=OREF_HEADERS
-            )
-            body = resp.text.strip().replace('\ufeff', '').replace('\x00', '')
-            
-            if not body or body == '':
-                # No active alerts
-                if oref_active_alerts:
-                    oref_active_alerts = []
-                    await manager.broadcast({
-                        "msg_type": "oref_clear",
-                        "alerts": []
-                    })
-                return
-            
-            data = resp.json()
-            
-            if isinstance(data, dict) and "data" in data:
-                cities = [c.strip() for c in data.get("data", []) if c and c.strip() and "בדיקה" not in c]
-                cat = int(data.get("cat", 1))
-                cat_info = ALERT_CATEGORIES.get(cat, ALERT_CATEGORIES[1])
-                alert_id = data.get("id", "")
-                title = data.get("title", cat_info["label"])
-                desc = data.get("desc", "")
-                
-                if cities:
-                    # Build alert key to detect new alerts
-                    alert_key = f"{alert_id}_{','.join(sorted(cities))}"
-                    
-                    alert_obj = {
-                        "id": alert_id,
-                        "cities": cities,
-                        "title": title,
-                        "desc": desc,
-                        "category": cat,
-                        "category_info": cat_info,
-                        "timestamp": datetime.now(local_tz).isoformat()
-                    }
-                    
-                    oref_active_alerts = [alert_obj]
-                    
-                    if alert_key not in oref_last_alert_ids:
-                        oref_last_alert_ids.add(alert_key)
-                        # Keep set manageable
-                        if len(oref_last_alert_ids) > 500:
-                            oref_last_alert_ids = set(list(oref_last_alert_ids)[-200:])
-                        
-                        # Broadcast new alert
-                        await manager.broadcast({
-                            "msg_type": "oref_alert",
-                            "alert": alert_obj,
-                            "is_new": True
-                        })
-                else:
-                    if oref_active_alerts:
-                        oref_active_alerts = []
-                        await manager.broadcast({
-                            "msg_type": "oref_clear",
-                            "alerts": []
-                        })
-            elif isinstance(data, list):
-                # Sometimes returns array format
-                pass
-                
-        except httpx.HTTPError as e:
-            if not oref_error_logged:
-                print(f"⚠️ Oref Alerts.json error: {e}")
-        except Exception as e:
-            if not oref_error_logged:
-                print(f"⚠️ Oref Alerts.json parse error (Oref blocks non-Israeli IPs): {e}")
-                oref_error_logged = True
-
-
-async def fetch_oref_history():
-    """Fetch recent alert history from Pikud HaOref (full day history)."""
-    global oref_recent_history, today_real_alerts
+    Uses alerts-history.oref.org.il with mode=3 (24h history) which is NOT geo-blocked.
+    Detects "active" alerts as those within the last 2 minutes from the history feed.
+    Also accumulates history data for stats.
+    """
+    global oref_active_alerts, oref_last_alert_ids, oref_recent_history, today_real_alerts, oref_error_logged
     
     now = datetime.now(local_tz)
-    today_str = now.strftime("%Y-%m-%d")
     
     async with httpx.AsyncClient(verify=False, timeout=15) as http_client:
         try:
@@ -514,69 +413,123 @@ async def fetch_oref_history():
             
             data = resp.json()
             
-            if isinstance(data, list):
-                history_items = []
-                for item in data:
-                    city = (item.get("data") or "").strip()
-                    if not city or "בדיקה" in city:
-                        continue
-                    
-                    # New API: alertDate is ISO like "2026-03-04T22:43:00"
-                    # time is exact like "22:43:06"
-                    alert_date_iso = item.get("alertDate", "")
-                    exact_time = item.get("time", "")
-                    title = item.get("category_desc", "")
-                    cat = int(item.get("category", 1))
-                    cat_info = ALERT_CATEGORIES.get(cat, ALERT_CATEGORIES.get(1, {}))
-                    
-                    # Normalize alertDate to "YYYY-MM-DD HH:MM:SS" format for compatibility
-                    # Use exact time if available, fallback to ISO time
-                    if exact_time and alert_date_iso:
-                        date_part = alert_date_iso[:10]  # "2026-03-04"
-                        alert_date_normalized = f"{date_part} {exact_time}"
-                    elif alert_date_iso:
-                        alert_date_normalized = alert_date_iso.replace("T", " ")
-                    else:
-                        continue
-                    
-                    alert_item = {
-                        "alertDate": alert_date_normalized,
-                        "title": title,
-                        "city": city,
-                        "category": cat,
-                        "category_info": cat_info,
-                    }
-                    history_items.append(alert_item)
-                    
-                    # Accumulate alerts from last 12 hours so they persist even after Oref rotates them
-                    try:
-                        alert_dt = datetime.strptime(alert_date_normalized, "%Y-%m-%d %H:%M:%S")
-                        alert_dt = alert_dt.replace(tzinfo=local_tz)
-                        cutoff_12h = now - timedelta(hours=12)
-                        if alert_dt >= cutoff_12h:
-                            exists = any(
-                                a["alertDate"] == alert_date_normalized and a["city"] == city
-                                for a in today_real_alerts
-                            )
-                            if not exists:
-                                today_real_alerts.append(alert_item)
-                    except Exception:
-                        pass
+            if not isinstance(data, list):
+                return
+            
+            history_items = []
+            active_cities = {}  # category -> {title, cat_info, cities: []}
+            
+            for item in data:
+                city = (item.get("data") or "").strip()
+                if not city or "בדיקה" in city:
+                    continue
                 
-                oref_recent_history = history_items
+                # alertDate is ISO like "2025-03-04T22:43:00"
+                # time is exact like "22:43:06"
+                alert_date_iso = item.get("alertDate", "")
+                exact_time = item.get("time", "")
+                title = item.get("category_desc", "")
+                cat = int(item.get("category", 1))
+                cat_info = ALERT_CATEGORIES.get(cat, ALERT_CATEGORIES.get(1, {}))
+                
+                # Normalize alertDate to "YYYY-MM-DD HH:MM:SS" format
+                if exact_time and alert_date_iso:
+                    date_part = alert_date_iso[:10]
+                    alert_date_normalized = f"{date_part} {exact_time}"
+                elif alert_date_iso:
+                    alert_date_normalized = alert_date_iso.replace("T", " ")
+                else:
+                    continue
+                
+                alert_item = {
+                    "alertDate": alert_date_normalized,
+                    "title": title,
+                    "city": city,
+                    "category": cat,
+                    "category_info": cat_info,
+                }
+                history_items.append(alert_item)
+                
+                # Parse timestamp to check recency
+                try:
+                    alert_dt = datetime.strptime(alert_date_normalized, "%Y-%m-%d %H:%M:%S")
+                    alert_dt = alert_dt.replace(tzinfo=local_tz)
+                except Exception:
+                    continue
+                
+                # --- Active alert detection: alerts within last 2 minutes ---
+                age_seconds = (now - alert_dt).total_seconds()
+                if 0 <= age_seconds <= ACTIVE_ALERT_WINDOW_SECONDS:
+                    if cat not in active_cities:
+                        active_cities[cat] = {"title": title, "cat_info": cat_info, "cities": []}
+                    if city not in active_cities[cat]["cities"]:
+                        active_cities[cat]["cities"].append(city)
+                
+                # --- Accumulate alerts from last 12 hours for stats ---
+                cutoff_12h = now - timedelta(hours=12)
+                if alert_dt >= cutoff_12h:
+                    exists = any(
+                        a["alertDate"] == alert_date_normalized and a["city"] == city
+                        for a in today_real_alerts
+                    )
+                    if not exists:
+                        today_real_alerts.append(alert_item)
+            
+            oref_recent_history = history_items
+            
+            # --- Process active alerts ---
+            if active_cities:
+                new_alerts = []
+                for cat, info in active_cities.items():
+                    alert_key = f"{cat}_{','.join(sorted(info['cities']))}"
+                    
+                    alert_obj = {
+                        "id": alert_key,
+                        "cities": info["cities"],
+                        "title": info["title"],
+                        "desc": "",
+                        "category": cat,
+                        "category_info": info["cat_info"],
+                        "timestamp": now.isoformat()
+                    }
+                    new_alerts.append(alert_obj)
+                    
+                    if alert_key not in oref_last_alert_ids:
+                        oref_last_alert_ids.add(alert_key)
+                        if len(oref_last_alert_ids) > 500:
+                            oref_last_alert_ids = set(list(oref_last_alert_ids)[-200:])
+                        
+                        await manager.broadcast({
+                            "msg_type": "oref_alert",
+                            "alert": alert_obj,
+                            "is_new": True
+                        })
+                
+                oref_active_alerts = new_alerts
+            else:
+                if oref_active_alerts:
+                    oref_active_alerts = []
+                    await manager.broadcast({
+                        "msg_type": "oref_clear",
+                        "alerts": []
+                    })
+            
+            # Reset error flag on success
+            if oref_error_logged:
+                oref_error_logged = False
+                print("✅ Oref History API is now responding successfully")
         
         except Exception as e:
             if not oref_error_logged:
-                print(f"⚠️ Oref History error (Oref blocks non-Israeli IPs): {e}")
+                print(f"⚠️ Oref History API error: {e}")
                 oref_error_logged = True
 
 
 async def oref_polling_loop():
     """Background task: poll Pikud HaOref every N seconds."""
-    print("🛡️ מתחיל לאזין לפיקוד העורף...")
+    print("🛡️ מתחיל לאזין לפיקוד העורף (via history API)...")
     while True:
-        await fetch_oref_alerts()
-        await fetch_oref_history()
+        await fetch_oref_data()
         await asyncio.sleep(OREF_POLL_INTERVAL)
 
 @app.on_event("startup")
