@@ -387,6 +387,7 @@ client = TelegramClient("session", api_id, api_hash)
 # Pikud HaOref Polling Logic
 # ==========================
 oref_error_logged = False  # Log Oref error only once
+oref_first_success = False  # Log first successful fetch
 ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered "active"
 
 async def fetch_oref_data():
@@ -396,11 +397,11 @@ async def fetch_oref_data():
     Detects "active" alerts as those within the last 2 minutes from the history feed.
     Also accumulates history data for stats.
     """
-    global oref_active_alerts, oref_last_alert_ids, oref_recent_history, today_real_alerts, oref_error_logged
+    global oref_active_alerts, oref_last_alert_ids, oref_recent_history, today_real_alerts, oref_error_logged, oref_first_success
     
     now = datetime.now(local_tz)
     
-    async with httpx.AsyncClient(verify=False, timeout=15) as http_client:
+    async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as http_client:
         try:
             resp = await http_client.get(
                 OREF_HISTORY_URL,
@@ -414,7 +415,6 @@ async def fetch_oref_data():
                     oref_error_logged = True
                 return
             
-            import json
             try:
                 data = json.loads(body)
             except json.JSONDecodeError as je:
@@ -427,6 +427,10 @@ async def fetch_oref_data():
             
             if not isinstance(data, list):
                 return
+            
+            if not oref_first_success:
+                oref_first_success = True
+                print(f"✅ Oref History API working! Got {len(data)} alert records")
             
             history_items = []
             active_cities = {}  # category -> {title, cat_info, cities: []}
