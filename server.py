@@ -409,9 +409,21 @@ async def fetch_oref_data():
             body = resp.text.strip().replace('\ufeff', '').replace('\x00', '')
             
             if not body:
+                if not oref_error_logged:
+                    print(f"⚠️ Oref History API returned empty body (status {resp.status_code})")
+                    oref_error_logged = True
                 return
             
-            data = resp.json()
+            import json
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as je:
+                if not oref_error_logged:
+                    print(f"⚠️ Oref History API JSON parse error: {je}")
+                    print(f"   Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type', 'N/A')}")
+                    print(f"   Body preview (first 200 chars): {body[:200]}")
+                    oref_error_logged = True
+                return
             
             if not isinstance(data, list):
                 return
