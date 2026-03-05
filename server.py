@@ -522,9 +522,8 @@ async def process_shigurimsh_messages(messages, is_init=False):
 async def process_pikud_haoref_messages(messages, is_init=False):
     """Process messages from PikudHaOref_all channel (official alerts).
     
-    These messages contain real-time alerts with format like:
-    🚨ירי רקטות וטילים (5/3/2026) 2:28
-    ✈חדירת כלי טיס עוין (5/3/2026) 0:34
+    Only processes messages containing "בדקות הקרובות צפויות להתקבל התרעות באזורך"
+    which are the early warning messages before missile strikes.
     """
     global telegram_pikud_active_alerts
     
@@ -546,34 +545,12 @@ async def process_pikud_haoref_messages(messages, is_init=False):
         if not is_new and not is_init:
             continue
         
-        # Skip "event ended" messages and updates
-        if "האירוע הסתיים" in text:
+        # Only process early warning messages
+        if "בדקות הקרובות צפויות להתקבל התרעות באזורך" not in text:
             continue
         
-        # Parse alert type from the message
-        alert_type = None
-        alert_icon = "🚨"
+        # These are missile early warnings - category 1
         alert_cat = 1
-        
-        if "ירי רקטות וטילים" in text:
-            alert_type = "missiles"
-            alert_icon = "🚀"
-            alert_cat = 1
-        elif "חדירת כלי טיס עוין" in text:
-            alert_type = "hostileAircraft"
-            alert_icon = "✈️"
-            alert_cat = 2
-        elif "חדירת מחבלים" in text:
-            alert_type = "terrorist"
-            alert_icon = "🔫"
-            alert_cat = 13
-        elif "מבזק" in text:
-            # "מבזק" = news flash / general alert
-            alert_type = "newsFlash"
-            alert_icon = "📢"
-            alert_cat = 10
-        else:
-            continue  # Skip messages we can't parse
         
         # Extract cities from message text (after area name line)
         # Format: "אזור X\ncity1, city2, city3\nהיכנסו למרחב המוגן"
