@@ -143,6 +143,14 @@ def extract_time_from_text(text):
         return match.group(1)
     return None
 
+def clean_forecast_text(text):
+    """Remove URLs and extra whitespace from forecast display text."""
+    # Remove Telegram URLs
+    text = re.sub(r'https?://t\.me/\S*', '', text)
+    # Remove extra newlines and whitespace  
+    text = re.sub(r'\n{2,}', '\n', text).strip()
+    return text
+
 def get_target_datetime(target_time_str, reference_time=None):
     """Convert a time string like '16:12' to a datetime.
     If reference_time is provided, use its date; otherwise use today's date.
@@ -448,8 +456,16 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1, cut
                 if resp.status_code != 200:
                     break
                 
+                # POST responses return JSON-encoded HTML string, GET returns raw HTML
+                html_content = resp.text
+                if page > 0:
+                    try:
+                        html_content = json.loads(html_content)
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Use raw text if not JSON
+                
                 parser = TelegramPageParser()
-                parser.feed(resp.text)
+                parser.feed(html_content)
                 
                 if not parser.messages:
                     break
@@ -562,6 +578,7 @@ async def process_shigurimsh_messages(messages, is_init=False):
         time_str = extract_time_from_text(text)
         if time_str:
             target_time = get_target_datetime(time_str, reference_time=msg_dt if is_init else None)
+            display_text = clean_forecast_text(text)
             
             # Add to today's forecasts
             fc_exists = any(
@@ -577,7 +594,7 @@ async def process_shigurimsh_messages(messages, is_init=False):
             
             # Update latest event
             latest_event = {
-                "text": text,
+                "text": display_text,
                 "target_time": target_time.isoformat(),
                 "has_data": True
             }
@@ -589,7 +606,7 @@ async def process_shigurimsh_messages(messages, is_init=False):
             )
             if not h_exists:
                 alert_history.insert(0, {
-                    "text": text,
+                    "text": display_text,
                     "target_time": target_time.isoformat(),
                     "received_at": msg_dt.isoformat()
                 })
@@ -756,6 +773,26 @@ async def process_pikud_haoref_messages(messages, is_init=False):
                 "alert": alert_obj,
                 "is_new": True
             })
+            
+            # --- Check if this alert matches the current forecast (early/late detection) ---
+            if alert_cat == 1 and latest_event.get("has_data") and latest_event.get("target_time"):
+                try:
+                    forecast_target = datetime.fromisoformat(latest_event["target_time"])
+                    diff_seconds = (alert_dt - forecast_target).total_seconds()
+                    diff_minutes = diff_seconds / 60
+                    # Only match if within 10 minutes of forecast
+                    if abs(diff_minutes) < 10:
+                        await manager.broadcast({
+                            "msg_type": "forecast_matched",
+                            "diff_seconds": diff_seconds,
+                            "diff_minutes": round(diff_minutes, 1),
+                            "forecast_time": latest_event["target_time"],
+                            "alert_time": alert_dt.isoformat(),
+                            "early": diff_seconds < 0,
+                            "late": diff_seconds > 0,
+                        })
+                except Exception:
+                    pass
 
 
 async def telegram_polling_loop():

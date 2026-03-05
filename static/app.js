@@ -11,7 +11,9 @@
         IDLE: 'idle',
         ALERT: 'alert',
         COUNTDOWN: 'countdown',
-        EXPIRED: 'expired'
+        EXPIRED: 'expired',
+        EARLY: 'early',     // Alert arrived before timer reached zero
+        LATE: 'late'        // Alert arrived after timer expired
     };
 
     // --- DOM Elements ---
@@ -146,6 +148,10 @@
                 handleNewAlert(data.alert, data.is_new);
                 break;
 
+            case 'forecast_matched':
+                handleForecastMatched(data);
+                break;
+
             case 'oref_clear':
                 handleAlertClear();
                 break;
@@ -192,6 +198,33 @@
         // If we have stored telegram data, now show it
         if (lastTelegramData && lastTelegramData.has_data) {
             applyForecastData(lastTelegramData);
+        }
+
+        // If countdown is running and a missile alert arrives, check timing
+        if (alert.category === 1 && (appState === STATE.COUNTDOWN || appState === STATE.EXPIRED) && currentTargetTime) {
+            const now = new Date();
+            const diffMs = now - currentTargetTime;
+            const diffSec = diffMs / 1000;
+            const diffMin = Math.abs(diffSec / 60);
+            
+            if (diffMin < 10) {
+                if (diffMs < 0) {
+                    // Alert arrived EARLY (timer still counting)
+                    setAppState(STATE.EARLY, diffSec);
+                } else if (appState === STATE.EXPIRED) {
+                    // Alert arrived LATE (timer already expired)
+                    setAppState(STATE.LATE, diffSec);
+                }
+            }
+        }
+    }
+
+    function handleForecastMatched(data) {
+        // Server confirmed forecast matched an alert
+        if (data.early) {
+            setAppState(STATE.EARLY, data.diff_seconds);
+        } else if (data.late) {
+            setAppState(STATE.LATE, data.diff_seconds);
         }
     }
 
@@ -299,7 +332,7 @@
     // ============================================
     // State Machine
     // ============================================
-    function setAppState(newState) {
+    function setAppState(newState, diffSeconds) {
         appState = newState;
         timerCard.className = 'timer-card';
 
@@ -348,7 +381,7 @@
                 timerBadge.className = 'timer-badge expired';
                 timerBadgeIcon.textContent = '⌛';
                 timerBadgeText.textContent = 'הזמן עבר';
-                timerMessage.textContent = 'הצפי חלף';
+                timerMessage.textContent = 'הצפי חלף — ממתין להתרעה...';
                 countHours.textContent = '00';
                 countMinutes.textContent = '00';
                 countSeconds.textContent = '00';
@@ -358,7 +391,59 @@
                 countMinutes.className = 'countdown-value';
                 countSeconds.className = 'countdown-value';
                 break;
+
+            case STATE.EARLY: {
+                clearCountdownInterval();
+                timerCard.classList.add('state-early');
+                timerBadge.className = 'timer-badge early';
+                timerBadgeIcon.textContent = '⚡';
+                timerBadgeText.textContent = 'הגיע מוקדם!';
+                const earlyLabel = formatDiffLabel(diffSeconds);
+                timerMessage.textContent = `ההתרעה הגיעה מוקדם ב-${earlyLabel}`;
+                // Show remaining time as 00:00:00
+                countHours.textContent = '00';
+                countMinutes.textContent = '00';
+                countSeconds.textContent = '00';
+                progressBar.style.width = '100%';
+                progressBar.className = 'progress-bar early-bar';
+                countHours.className = 'countdown-value';
+                countMinutes.className = 'countdown-value';
+                countSeconds.className = 'countdown-value';
+                showToast(`⚡ ההתרעה הגיעה מוקדם ב-${earlyLabel}`);
+                break;
+            }
+
+            case STATE.LATE: {
+                clearCountdownInterval();
+                timerCard.classList.add('state-late');
+                timerBadge.className = 'timer-badge late';
+                timerBadgeIcon.textContent = '⏰';
+                timerBadgeText.textContent = 'הגיע באיחור';
+                const lateLabel = formatDiffLabel(diffSeconds);
+                timerMessage.textContent = `ההתרעה איחרה ב-${lateLabel}`;
+                countHours.textContent = '00';
+                countMinutes.textContent = '00';
+                countSeconds.textContent = '00';
+                progressBar.style.width = '0%';
+                progressBar.className = 'progress-bar late-bar';
+                countHours.className = 'countdown-value';
+                countMinutes.className = 'countdown-value';
+                countSeconds.className = 'countdown-value';
+                showToast(`⏰ ההתרעה איחרה ב-${lateLabel}`);
+                break;
+            }
         }
+    }
+
+    function formatDiffLabel(seconds) {
+        const absSec = Math.abs(seconds);
+        if (absSec < 60) return `${Math.round(absSec)} שניות`;
+        const mins = Math.floor(absSec / 60);
+        const secs = Math.round(absSec % 60);
+        if (mins < 60) return secs > 0 ? `${mins} דקות ו-${secs} שניות` : `${mins} דקות`;
+        const hours = Math.floor(mins / 60);
+        const remainMins = mins % 60;
+        return remainMins > 0 ? `${hours} שעות ו-${remainMins} דקות` : `${hours} שעות`;
     }
 
     // ============================================

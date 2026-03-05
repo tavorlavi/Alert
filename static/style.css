@@ -251,6 +251,20 @@ body {
     opacity: 0.7;
 }
 
+.timer-card.state-early {
+    border-color: var(--green);
+    box-shadow: 0 0 25px var(--green-glow);
+}
+
+.timer-card.state-early .timer-card-glow {
+    background: linear-gradient(135deg, var(--green-glow), transparent);
+}
+
+.timer-card.state-late {
+    border-color: var(--amber);
+    box-shadow: 0 0 25px var(--amber-glow);
+}
+
 @keyframes alertPulse {
     0%, 100% { box-shadow: 0 0 20px var(--red-glow); }
     50% { box-shadow: 0 0 40px var(--red-glow); }
@@ -295,6 +309,18 @@ body {
     background: rgba(100, 116, 139, 0.15);
     color: var(--text-muted);
     border-color: rgba(100, 116, 139, 0.2);
+}
+
+.timer-badge.early {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--green);
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.timer-badge.late {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--amber);
+    border-color: rgba(245, 158, 11, 0.3);
 }
 
 @keyframes badgePulse {
@@ -404,6 +430,14 @@ body {
 .progress-bar.critical {
     background: var(--red);
     animation: progressPulse 0.5s ease-in-out infinite;
+}
+
+.progress-bar.early-bar {
+    background: var(--green);
+}
+
+.progress-bar.late-bar {
+    background: var(--amber);
 }
 
 @keyframes progressPulse {
