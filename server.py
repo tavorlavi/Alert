@@ -220,8 +220,10 @@ def compute_stats():
     oldest_alert_time = alert_rounds[0]["time"] if alert_rounds else None
     
     # Build comparison: match each forecast to the closest real alert
+    # Deduplicate forecasts by target_time (same time = same prediction)
     comparisons = []
     used_rounds = set()
+    seen_forecast_times = set()
     
     for fc in today_forecasts:
         try:
@@ -230,6 +232,11 @@ def compute_stats():
                 fc_time = fc_time.replace(tzinfo=local_tz)
         except Exception:
             continue
+        
+        fc_time_key = fc_time.strftime("%H:%M")
+        if fc_time_key in seen_forecast_times:
+            continue  # Skip duplicate forecasts for the same time
+        seen_forecast_times.add(fc_time_key)
         
         best_match = None
         best_diff = None
@@ -246,11 +253,12 @@ def compute_stats():
         
         comparison = {
             "forecast_text": fc["text"],
-            "forecast_time": fc_time.strftime("%H:%M"),
+            "forecast_time": fc_time_key,
             "received_at": fc.get("received_at", ""),
         }
         
-        if best_match and best_diff is not None and best_diff < 7200:  # Within 2 hours
+        # Match only if within 3 minutes (180 seconds) — tighter window to avoid false matches
+        if best_match and best_diff is not None and best_diff < 180:
             used_rounds.add(best_idx)
             diff_minutes = (best_match["time"] - fc_time).total_seconds() / 60
             comparison["real_time"] = best_match["time_str"]
