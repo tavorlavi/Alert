@@ -108,7 +108,7 @@ today_messages = []       # ALL messages from the channel today (for display)
 # ==========================
 # Pikud HaOref (Home Front Command) API
 # ==========================
-OREF_HISTORY_URL = "https://alerts-history.oref.org.il/Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=3"
+OREF_HISTORY_URL = "https://alerts-history.oref.org.il/Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=2"
 OREF_HISTORY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -757,7 +757,7 @@ ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered
 async def fetch_oref_data():
     """Fetch alert data from Oref history API (works internationally, unlike Alerts.json).
     
-    Uses alerts-history.oref.org.il with mode=3 (24h history) which is NOT geo-blocked.
+    Uses alerts-history.oref.org.il with mode=2 (last month history) which is NOT geo-blocked.
     Detects "active" alerts as those within the last 2 minutes from the history feed.
     Also accumulates history data for stats.
     """
