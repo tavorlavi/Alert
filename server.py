@@ -752,7 +752,7 @@ async def process_pikud_haoref_messages(messages, is_init=False):
             })
         
         # --- Live alert broadcasting (only new real-time alerts, not init) ---
-        if cities and is_new and not is_init and alert_cat in (1, 2, 14):
+        if is_new and not is_init and alert_cat in (1, 2, 3, 14):
             alert_key = f"tg_{alert_cat}_{msg_id}"
             
             alert_obj = {
@@ -793,6 +793,30 @@ async def process_pikud_haoref_messages(messages, is_init=False):
                         })
                 except Exception:
                     pass
+        
+        # --- On init, add recent alerts (< 30 min) to persistent system for new clients ---
+        if is_init and alert_cat in (1, 2, 3, 14):
+            age_seconds = (now - alert_dt).total_seconds()
+            if 0 <= age_seconds <= ALERT_PERSIST_SECONDS:
+                alert_key = f"tg_{alert_cat}_{msg_id}"
+                alert_obj = {
+                    "id": alert_key,
+                    "cities": cities[:50],
+                    "title": cat_info.get("label", title),
+                    "desc": "",
+                    "category": alert_cat,
+                    "category_info": cat_info,
+                    "timestamp": alert_dt.isoformat(),
+                    "source": "telegram_pikud"
+                }
+                add_persistent_alert(alert_obj)
+        
+        # --- Handle "event ended" (category 13) — broadcast clear ---
+        if is_new and not is_init and alert_cat == 13:
+            await manager.broadcast({
+                "msg_type": "oref_clear",
+                "alerts": []
+            })
 
 
 async def telegram_polling_loop():
@@ -1106,11 +1130,12 @@ async def get_debug():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    # Send initial state for BOTH data sources
+    # Send initial state — includes ALL active alerts (Oref API + Telegram Pikud)
+    all_active = get_all_active_alerts()
     await websocket.send_json({
         "msg_type": "init",
         "telegram": latest_event,
-        "oref_alerts": oref_active_alerts,
+        "oref_alerts": all_active,
         "oref_history": oref_recent_history,
         "city_coords": city_coords,
     })

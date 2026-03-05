@@ -38,6 +38,12 @@
     const timerForecast = $('timerForecast');
     const forecastText = $('forecastText');
 
+    // Alert details
+    const alertDetails = $('alertDetails');
+    const alertDetailsIcon = $('alertDetailsIcon');
+    const alertDetailsTitle = $('alertDetailsTitle');
+    const alertDetailsCities = $('alertDetailsCities');
+
     // Toast & Particles
     const toastContainer = $('toastContainer');
     const particlesContainer = $('particles');
@@ -123,24 +129,22 @@
     function handleMessage(data) {
         switch (data.msg_type) {
             case 'init':
+                // Handle active alerts (from persistent alert system — includes both Oref and Telegram)
                 handleAlertState(data.oref_alerts || []);
-                // Store telegram data but only show if alert is active
+                // Always store and apply forecast data (even in IDLE)
                 if (data.telegram && data.telegram.has_data) {
                     lastTelegramData = data.telegram;
-                    if (hasActiveAlert) {
-                        applyForecastData(data.telegram);
-                    }
+                    applyForecastData(data.telegram);
                 }
                 isFirstMessage = false;
                 break;
 
             case 'telegram_timing':
                 lastTelegramData = data;
-                if (hasActiveAlert) {
-                    applyForecastData(data);
-                    if (!isFirstMessage) {
-                        showToast('⏱️ צפי חדש התקבל!');
-                    }
+                // Always apply forecast (show expected time regardless of alert state)
+                applyForecastData(data);
+                if (!isFirstMessage) {
+                    showToast('⏱️ צפי חדש התקבל!');
                 }
                 break;
 
@@ -159,7 +163,7 @@
             default:
                 if (data.has_data !== undefined) {
                     lastTelegramData = data;
-                    if (hasActiveAlert) applyForecastData(data);
+                    applyForecastData(data);
                 }
                 break;
         }
@@ -170,18 +174,35 @@
     // ============================================
     function handleAlertState(alerts) {
         if (!alerts || alerts.length === 0) {
-            if (appState === STATE.ALERT) {
+            if (hasActiveAlert) {
                 handleAlertClear();
             }
             return;
         }
-        // There are active alerts
+        // There are active alerts — combine them for display
+        // Group by category for display
+        const allCities = [];
+        let primaryTitle = '';
+        let primaryIcon = '🚨';
+        let primaryCategory = null;
+        
+        for (const a of alerts) {
+            const cities = a.cities || (a.data ? [].concat(a.data).filter(Boolean) : []);
+            allCities.push(...cities);
+            if (!primaryTitle) {
+                primaryTitle = a.title || a.category_info?.label || 'התרעה';
+                primaryIcon = a.category_info?.icon || '🚨';
+                primaryCategory = a.category;
+            }
+        }
+        
         const combined = {
-            title: alerts[0]?.title || 'התרעה',
-            cities: alerts.map(a => a.data).flat().filter(Boolean),
+            title: primaryTitle,
+            cities: [...new Set(allCities)],
             desc: alerts[0]?.desc || '',
+            category: primaryCategory,
             category_info: alerts[0]?.category_info || {},
-            timestamp: alerts[0]?.alertDate
+            timestamp: alerts[0]?.timestamp || alerts[0]?.alertDate
         };
         showAlert(combined);
     }
@@ -209,10 +230,8 @@
             
             if (diffMin < 10) {
                 if (diffMs < 0) {
-                    // Alert arrived EARLY (timer still counting)
                     setAppState(STATE.EARLY, diffSec);
                 } else if (appState === STATE.EXPIRED) {
-                    // Alert arrived LATE (timer already expired)
                     setAppState(STATE.LATE, diffSec);
                 }
             }
@@ -220,7 +239,6 @@
     }
 
     function handleForecastMatched(data) {
-        // Server confirmed forecast matched an alert
         if (data.early) {
             setAppState(STATE.EARLY, data.diff_seconds);
         } else if (data.late) {
@@ -231,7 +249,26 @@
     function showAlert(alert) {
         hasActiveAlert = true;
 
-        // Update timer card to ALERT state (waiting for forecast)
+        // Display alert details in the panel
+        const icon = alert.category_info?.icon || '🚨';
+        const title = alert.title || 'התרעה פעילה';
+        const cities = alert.cities || [];
+        
+        alertDetailsIcon.textContent = icon;
+        alertDetailsTitle.textContent = title;
+        
+        if (cities.length > 0) {
+            const cityTags = cities.slice(0, 30).map(c => 
+                `<span class="city-tag">${escapeHtml(c)}</span>`
+            ).join('');
+            const extra = cities.length > 30 ? `<span class="city-tag more">+${cities.length - 30} נוספים</span>` : '';
+            alertDetailsCities.innerHTML = cityTags + extra;
+        } else {
+            alertDetailsCities.innerHTML = '';
+        }
+        alertDetails.style.display = '';
+
+        // Update timer card to ALERT state if not already counting down
         if (appState === STATE.IDLE) {
             setAppState(STATE.ALERT);
         }
@@ -239,6 +276,7 @@
 
     function handleAlertClear() {
         hasActiveAlert = false;
+        alertDetails.style.display = 'none';
 
         // If not counting down, go back to idle
         if (appState === STATE.ALERT) {
@@ -258,12 +296,47 @@
         }
 
         if (data.target_time) {
-            currentTargetTime = new Date(data.target_time);
-            countdownStartTime = new Date();
-            timerTimestamp.textContent = formatTime(currentTargetTime);
+            const targetDt = new Date(data.target_time);
+            // Only update countdown target if it's a new/different time
+            if (!currentTargetTime || currentTargetTime.getTime() !== targetDt.getTime()) {
+                currentTargetTime = targetDt;
+                countdownStartTime = new Date();
+            }
+            timerTimestamp.textContent = 'צפי: ' + formatTime(targetDt);
         }
 
-        setAppState(STATE.COUNTDOWN);
+        // If there's an active alert → start countdown
+        // If IDLE → just show forecast info without full countdown state
+        if (hasActiveAlert && appState !== STATE.COUNTDOWN && appState !== STATE.EXPIRED && appState !== STATE.EARLY && appState !== STATE.LATE) {
+            setAppState(STATE.COUNTDOWN);
+        } else if (appState === STATE.IDLE && data.target_time) {
+            // Show forecast section in idle mode (no countdown animation)
+            countdownSection.style.display = '';
+            updateCountdownDisplay();
+        }
+    }
+
+    function updateCountdownDisplay() {
+        if (!currentTargetTime) return;
+        const now = new Date();
+        const diff = currentTargetTime - now;
+
+        if (diff <= 0) {
+            countHours.textContent = '00';
+            countMinutes.textContent = '00';
+            countSeconds.textContent = '00';
+            progressBar.style.width = '0%';
+            return;
+        }
+
+        const totalSeconds = Math.floor(diff / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        countHours.textContent = String(hours).padStart(2, '0');
+        countMinutes.textContent = String(minutes).padStart(2, '0');
+        countSeconds.textContent = String(seconds).padStart(2, '0');
     }
 
     // ============================================
@@ -343,17 +416,26 @@
                 timerBadgeIcon.textContent = '✅';
                 timerBadgeText.textContent = 'הכל שקט';
                 timerMessage.textContent = 'אין התרעות פעילות כרגע';
-                timerTimestamp.textContent = '';
-                countdownSection.style.display = 'none';
-                timerForecast.style.display = 'none';
+                alertDetails.style.display = 'none';
                 clearCountdownInterval();
-                currentTargetTime = null;
-                countdownStartTime = null;
                 progressBar.style.width = '100%';
                 progressBar.className = 'progress-bar';
                 countHours.className = 'countdown-value';
                 countMinutes.className = 'countdown-value';
                 countSeconds.className = 'countdown-value';
+                // Keep forecast visible if we have data, but hide countdown timer
+                if (lastTelegramData && lastTelegramData.has_data && lastTelegramData.target_time) {
+                    timerForecast.style.display = '';
+                    timerTimestamp.textContent = 'צפי: ' + formatTime(new Date(lastTelegramData.target_time));
+                    countdownSection.style.display = '';
+                    updateCountdownDisplay();
+                } else {
+                    timerTimestamp.textContent = '';
+                    countdownSection.style.display = 'none';
+                    timerForecast.style.display = 'none';
+                    currentTargetTime = null;
+                    countdownStartTime = null;
+                }
                 break;
 
             case STATE.ALERT:
@@ -361,8 +443,11 @@
                 timerBadge.className = 'timer-badge alert';
                 timerBadgeIcon.textContent = '🚨';
                 timerBadgeText.textContent = 'התרעה פעילה';
-                timerMessage.textContent = 'ממתין לצפי...';
-                countdownSection.style.display = 'none';
+                if (lastTelegramData && lastTelegramData.has_data && lastTelegramData.target_time) {
+                    timerMessage.textContent = 'התרעה פעילה — צפי זמין';
+                } else {
+                    timerMessage.textContent = 'התרעה פעילה — ממתין לצפי...';
+                }
                 break;
 
             case STATE.COUNTDOWN:
@@ -566,6 +651,12 @@
     // ============================================
     function startPolling() {
         setInterval(loadStats, 30000);  // Refresh stats every 30s
+        // Update idle countdown display every second (no animated progress, just time)
+        setInterval(() => {
+            if (appState === STATE.IDLE && currentTargetTime) {
+                updateCountdownDisplay();
+            }
+        }, 1000);
     }
 
     // ============================================

@@ -469,6 +469,57 @@ body {
     white-space: pre-wrap;
 }
 
+/* Alert Details (shown inside timer card when alert is active) */
+.alert-details {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-sm);
+    text-align: right;
+}
+
+.alert-details-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+
+.alert-details-icon {
+    font-size: 1.3rem;
+}
+
+.alert-details-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--red);
+}
+
+.alert-details-cities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.city-tag {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.city-tag.more {
+    background: rgba(100, 116, 139, 0.15);
+    border-color: rgba(100, 116, 139, 0.2);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 /* ============================================
    STATS SECTION
    ============================================ */
