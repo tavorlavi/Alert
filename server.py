@@ -396,8 +396,13 @@ class TelegramPageParser(HTMLParser):
 telegram_last_seen_ids = {ch: set() for ch in TELEGRAM_CHANNELS}
 telegram_initialized = {ch: False for ch in TELEGRAM_CHANNELS}
 
-async def scrape_telegram_channel(channel_name, channel_config):
-    """Scrape latest messages from a public Telegram channel via t.me/s/."""
+async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
+    """Scrape latest messages from a public Telegram channel via t.me/s/.
+    
+    Args:
+        max_pages: Number of pages to load. Each page has ~20 messages.
+                   Use max_pages>1 during init to load more history.
+    """
     url = channel_config["url"]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -405,38 +410,81 @@ async def scrape_telegram_channel(channel_name, channel_config):
     
     async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as http_client:
         try:
-            resp = await http_client.get(url, headers=headers)
-            if resp.status_code != 200:
-                return []
+            all_results = []
+            oldest_msg_id = None
             
-            parser = TelegramPageParser()
-            parser.feed(resp.text)
+            for page in range(max_pages):
+                if page == 0:
+                    # First page: normal GET
+                    resp = await http_client.get(url, headers=headers)
+                else:
+                    # Subsequent pages: POST with before=oldest_msg_id for older messages
+                    if not oldest_msg_id:
+                        break
+                    resp = await http_client.post(
+                        url,
+                        headers={**headers, "X-Requested-With": "XMLHttpRequest"},
+                        data={"before": oldest_msg_id}
+                    )
+                
+                if resp.status_code != 200:
+                    break
+                
+                parser = TelegramPageParser()
+                parser.feed(resp.text)
+                
+                if not parser.messages:
+                    break
+                
+                page_results = []
+                for msg in parser.messages:
+                    text = msg.get("text", "").strip()
+                    dt_str = msg.get("datetime", "")
+                    msg_id = msg.get("id", "")
+                    
+                    if not text:
+                        continue
+                    
+                    # Parse datetime
+                    try:
+                        msg_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                        msg_dt = msg_dt.astimezone(local_tz)
+                    except Exception:
+                        msg_dt = datetime.now(local_tz)
+                    
+                    page_results.append({
+                        "text": text,
+                        "date": msg_dt.isoformat(),
+                        "id": msg_id,
+                        "channel": channel_name,
+                        "msg_dt": msg_dt,
+                    })
+                
+                all_results.extend(page_results)
+                
+                # Find the oldest message ID for pagination
+                # Message IDs from t.me/s/ are like "123" (numeric)
+                page_ids = [r["id"] for r in page_results if r["id"]]
+                if page_ids:
+                    # Get the numerically smallest ID (oldest message)
+                    numeric_ids = []
+                    for mid in page_ids:
+                        try:
+                            numeric_ids.append(int(mid))
+                        except (ValueError, TypeError):
+                            pass
+                    if numeric_ids:
+                        oldest_msg_id = str(min(numeric_ids))
+                    else:
+                        break
+                else:
+                    break
+                
+                # Small delay between pagination requests
+                if page < max_pages - 1:
+                    await asyncio.sleep(0.3)
             
-            results = []
-            for msg in parser.messages:
-                text = msg.get("text", "").strip()
-                dt_str = msg.get("datetime", "")
-                msg_id = msg.get("id", "")
-                
-                if not text:
-                    continue
-                
-                # Parse datetime
-                try:
-                    msg_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                    msg_dt = msg_dt.astimezone(local_tz)
-                except Exception:
-                    msg_dt = datetime.now(local_tz)
-                
-                results.append({
-                    "text": text,
-                    "date": msg_dt.isoformat(),
-                    "id": msg_id,
-                    "channel": channel_name,
-                    "msg_dt": msg_dt,
-                })
-            
-            return results
+            return all_results
         except Exception as e:
             print(f"⚠️ Error scraping {channel_name}: {e}")
             return []
@@ -533,10 +581,10 @@ async def process_pikud_haoref_messages(messages, is_init=False):
     Only processes messages containing "בדקות הקרובות צפויות להתקבל התרעות באזורך"
     which are the early warning messages before missile strikes.
     """
-    global telegram_pikud_active_alerts
+    global telegram_pikud_active_alerts, today_messages
     
     now = datetime.now(local_tz)
-    cutoff = now - timedelta(minutes=30)  # Only care about recent messages
+    cutoff = now - timedelta(hours=12)  # Match shigurimsh: last 12 hours
     
     for msg in messages:
         msg_id = msg["id"]
@@ -556,6 +604,15 @@ async def process_pikud_haoref_messages(messages, is_init=False):
         # Only process early warning messages
         if "בדקות הקרובות צפויות להתקבל התרעות באזורך" not in text:
             continue
+        
+        # Add to today's messages for display (same as shigurimsh)
+        exists = any(m.get("id") == f"pikud_{msg_id}" for m in today_messages)
+        if not exists:
+            today_messages.insert(0, {
+                "text": f"[פיקוד העורף] {text}",
+                "date": msg_dt.isoformat(),
+                "id": f"pikud_{msg_id}",
+            })
         
         # These are missile early warnings - category 1
         alert_cat = 1
@@ -611,26 +668,27 @@ async def telegram_polling_loop():
     """Background task: poll Telegram channels via web scraping."""
     print("📱 Starting Telegram channel scraping (no auth needed)...")
     
-    # Initial fetch for all channels
+    # Initial fetch for all channels — load multiple pages to cover ~12h of history
+    INIT_PAGES = 15  # ~20 messages per page = ~300 messages for 12h coverage
     for ch_name, ch_config in TELEGRAM_CHANNELS.items():
         try:
-            messages = await scrape_telegram_channel(ch_name, ch_config)
+            messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES)
             if messages:
                 if ch_config["type"] == "forecast":
                     await process_shigurimsh_messages(messages, is_init=True)
                 elif ch_config["type"] == "official_alert":
                     await process_pikud_haoref_messages(messages, is_init=True)
                 telegram_initialized[ch_name] = True
-                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages")
+                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages ({INIT_PAGES} pages)")
         except Exception as e:
             print(f"⚠️ Error initializing {ch_name}: {e}")
     
-    # Continuous polling
+    # Continuous polling — only latest page
     while True:
         await asyncio.sleep(TELEGRAM_POLL_INTERVAL)
         for ch_name, ch_config in TELEGRAM_CHANNELS.items():
             try:
-                messages = await scrape_telegram_channel(ch_name, ch_config)
+                messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=1)
                 if messages:
                     if ch_config["type"] == "forecast":
                         await process_shigurimsh_messages(messages, is_init=False)
