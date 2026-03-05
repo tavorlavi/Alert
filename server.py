@@ -180,8 +180,14 @@ def compute_stats():
     ]
     
     # Group real alerts by time (within 1 min window) to get unique "alert rounds"
+    # Only include MISSILE alerts (category 1) for forecast matching,
+    # since forecasts from shigurimsh are specifically about missile launches
     alert_rounds = []
     for item in real_alerts_recent:
+        cat = item.get("category", 1)
+        if cat != 1:
+            continue  # Skip non-missile alerts (aircraft, earthquake, etc.)
+        
         alert_date_str = item.get("alertDate", "")
         try:
             alert_dt = datetime.strptime(alert_date_str, "%Y-%m-%d %H:%M:%S")
@@ -204,7 +210,7 @@ def compute_stats():
                 "title": item.get("title", ""),
                 "cities": [item.get("city", "")],
                 "count": 1,
-                "category": item.get("category", 1),
+                "category": cat,
             })
     
     # Sort rounds by time
@@ -265,10 +271,10 @@ def compute_stats():
         
         comparisons.append(comparison)
     
-    # Unmatched real alerts (alerts with no forecast) – only category 1 (ירי רקטות וטילים)
+    # Unmatched real alerts (missile alerts with no forecast)
     unmatched_alerts = []
     for idx, rnd in enumerate(alert_rounds):
-        if idx not in used_rounds and rnd.get("category") == 14:
+        if idx not in used_rounds and rnd.get("category") == 1:
             unmatched_alerts.append({
                 "real_time": rnd["time_str"],
                 "title": rnd["title"],
