@@ -290,19 +290,27 @@
     function applyForecastData(data) {
         if (!data || !data.has_data) return;
 
-        if (data.text) {
-            forecastText.textContent = data.text;
-            timerForecast.style.display = '';
-        }
-
         if (data.target_time) {
             const targetDt = new Date(data.target_time);
+            const now = new Date();
+            const pastMs = now - targetDt;
+            
+            // Don't show forecasts that are more than 15 minutes past their target time
+            if (pastMs > 15 * 60 * 1000) {
+                return;
+            }
+            
             // Only update countdown target if it's a new/different time
             if (!currentTargetTime || currentTargetTime.getTime() !== targetDt.getTime()) {
                 currentTargetTime = targetDt;
                 countdownStartTime = new Date();
             }
             timerTimestamp.textContent = 'צפי: ' + formatTime(targetDt);
+        }
+
+        if (data.text) {
+            forecastText.textContent = data.text;
+            timerForecast.style.display = '';
         }
 
         // If there's an active alert → start countdown
@@ -423,12 +431,25 @@
                 countHours.className = 'countdown-value';
                 countMinutes.className = 'countdown-value';
                 countSeconds.className = 'countdown-value';
-                // Keep forecast visible if we have data, but hide countdown timer
+                // Keep forecast visible if we have RECENT data
                 if (lastTelegramData && lastTelegramData.has_data && lastTelegramData.target_time) {
-                    timerForecast.style.display = '';
-                    timerTimestamp.textContent = 'צפי: ' + formatTime(new Date(lastTelegramData.target_time));
-                    countdownSection.style.display = '';
-                    updateCountdownDisplay();
+                    const targetDt = new Date(lastTelegramData.target_time);
+                    const pastMs = new Date() - targetDt;
+                    if (pastMs <= 15 * 60 * 1000) {
+                        // Forecast is still relevant (< 15 min past)
+                        timerForecast.style.display = '';
+                        timerTimestamp.textContent = 'צפי: ' + formatTime(targetDt);
+                        countdownSection.style.display = '';
+                        updateCountdownDisplay();
+                    } else {
+                        // Forecast expired — clear it
+                        timerTimestamp.textContent = '';
+                        countdownSection.style.display = 'none';
+                        timerForecast.style.display = 'none';
+                        currentTargetTime = null;
+                        countdownStartTime = null;
+                        lastTelegramData = null;
+                    }
                 } else {
                     timerTimestamp.textContent = '';
                     countdownSection.style.display = 'none';
@@ -651,10 +672,29 @@
     // ============================================
     function startPolling() {
         setInterval(loadStats, 30000);  // Refresh stats every 30s
-        // Update idle countdown display every second (no animated progress, just time)
+        // Update idle display every second + auto-expire stale forecasts
         setInterval(() => {
-            if (appState === STATE.IDLE && currentTargetTime) {
-                updateCountdownDisplay();
+            if (currentTargetTime) {
+                const pastMs = new Date() - currentTargetTime;
+                // Auto-expire: if forecast target passed by more than 15 min, clear it
+                if (pastMs > 15 * 60 * 1000 && (appState === STATE.IDLE || appState === STATE.EXPIRED)) {
+                    currentTargetTime = null;
+                    countdownStartTime = null;
+                    lastTelegramData = null;
+                    if (appState === STATE.EXPIRED) {
+                        setAppState(STATE.IDLE);
+                    } else {
+                        // Just hide forecast sections in IDLE
+                        countdownSection.style.display = 'none';
+                        timerForecast.style.display = 'none';
+                        timerTimestamp.textContent = '';
+                    }
+                    return;
+                }
+                // Update countdown display in idle mode
+                if (appState === STATE.IDLE) {
+                    updateCountdownDisplay();
+                }
             }
         }, 1000);
     }

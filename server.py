@@ -592,12 +592,22 @@ async def process_shigurimsh_messages(messages, is_init=False):
                     "received_at": msg_dt.isoformat(),
                 })
             
-            # Update latest event
-            latest_event = {
-                "text": display_text,
-                "target_time": target_time.isoformat(),
-                "has_data": True
-            }
+            # Update latest event — but only if this forecast is still relevant
+            # During init: skip forecasts whose target_time is more than 15 min in the past
+            # During polling: always update (it's the freshest data)
+            forecast_is_relevant = True
+            if is_init:
+                age_past_target = (now - target_time).total_seconds()
+                if age_past_target > 15 * 60:  # More than 15 min after target time
+                    forecast_is_relevant = False
+            
+            if forecast_is_relevant:
+                latest_event = {
+                    "text": display_text,
+                    "target_time": target_time.isoformat(),
+                    "received_at": msg_dt.isoformat(),
+                    "has_data": True
+                }
             
             # Save to history
             h_exists = any(
