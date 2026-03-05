@@ -3,7 +3,6 @@ import json
 import asyncio
 import httpx
 from datetime import datetime, timedelta
-from telethon import TelegramClient, events
 from dateutil import tz
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
-import base64
+from html.parser import HTMLParser
 
 # Load .env file for local development (ignored in production)
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -24,19 +23,24 @@ if os.path.exists(env_path):
                 os.environ.setdefault(key.strip(), val.strip())
 
 # ==========================
-# Configuration: reads from env vars
+# Configuration
 # ==========================
-api_id = int(os.environ.get("TELEGRAM_API_ID", "0"))
-api_hash = os.environ.get("TELEGRAM_API_HASH", "")
-channel_username = os.environ.get("TELEGRAM_CHANNEL", "shigurimsh")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Restore Telegram session from env var (for cloud deployment)
-TELEGRAM_SESSION_B64 = os.environ.get("TELEGRAM_SESSION", "")
-if TELEGRAM_SESSION_B64 and not os.path.exists("session.session"):
-    with open("session.session", "wb") as f:
-        f.write(base64.b64decode(TELEGRAM_SESSION_B64))
-    print("✅ Telegram session restored from env var")
+# Telegram channels to scrape via public t.me/s/ pages (no auth needed)
+TELEGRAM_CHANNELS = {
+    "shigurimsh": {
+        "url": "https://t.me/s/shigurimsh",
+        "type": "forecast",  # This channel provides timing forecasts
+        "label": "שיגורים מהשנייה"
+    },
+    "PikudHaOref_all": {
+        "url": "https://t.me/s/PikudHaOref_all",
+        "type": "official_alert",  # Official Pikud HaOref alerts
+        "label": "פיקוד העורף"
+    }
+}
+TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
 # ==========================
 
 local_tz = tz.gettz("Asia/Jerusalem")
@@ -159,70 +163,7 @@ def get_target_datetime(target_time_str, reference_time=None):
 
     return target_time
 
-# ==========================
-# Fetch today's Telegram history on startup
-# ==========================
-async def fetch_today_telegram_messages():
-    """Fetch all messages from the channel for today and extract forecasts."""
-    global today_forecasts, today_messages
-    
-    now = datetime.now(local_tz)
-    cutoff = now - timedelta(hours=12)
-    
-    try:
-        entity = await client.get_entity(channel_username)
-        messages = await client.get_messages(entity, limit=200, offset_date=None)
-        
-        today_msgs = []
-        today_fcs = []
-        
-        for msg in messages:
-            if not msg.text:
-                continue
-            # Convert message date to local timezone
-            msg_date = msg.date.astimezone(local_tz)
-            if msg_date < cutoff:
-                break  # Messages are in reverse chronological order
-            
-            today_msgs.append({
-                "text": msg.text,
-                "date": msg_date.isoformat(),
-                "id": msg.id,
-            })
-            
-            # Try to extract a time from every message
-            time_str = extract_time_from_text(msg.text)
-            if time_str:
-                target_time = get_target_datetime(time_str, reference_time=msg_date)
-                today_fcs.append({
-                    "text": msg.text,
-                    "target_time": target_time.isoformat(),
-                    "received_at": msg_date.isoformat(),
-                })
-                
-                # Also add to alert_history if not already there
-                exists = any(h.get("target_time") == target_time.isoformat() and h.get("text") == msg.text for h in alert_history)
-                if not exists:
-                    alert_history.append({
-                        "text": msg.text,
-                        "target_time": target_time.isoformat(),
-                        "received_at": msg_date.isoformat()
-                    })
-        
-        # Sort: newest first
-        today_msgs.reverse()
-        today_messages = today_msgs
-        today_forecasts = today_fcs
-        
-        # Sort alert_history newest first
-        alert_history.sort(key=lambda x: x.get("received_at", ""), reverse=True)
-        if len(alert_history) > MAX_HISTORY:
-            del alert_history[MAX_HISTORY:]
-        
-        print(f"📊 נמצאו {len(today_messages)} הודעות היום, {len(today_forecasts)} צפי")
-        
-    except Exception as e:
-        print(f"⚠️ שגיאה בטעינת היסטוריית הודעות: {e}")
+# (Telegram message fetching is now handled by telegram_polling_loop via web scraping)
 
 
 def compute_stats():
@@ -380,15 +321,389 @@ def _format_diff(diff_minutes):
         return f"⚡ ההתרעה הקדימה ב-{label}"
 
 
-# Telegram Client setup
-client = TelegramClient("session", api_id, api_hash)
+# ==========================
+# Telegram Scraping (no auth needed - uses public t.me/s/ pages)
+# ==========================
+class TelegramPageParser(HTMLParser):
+    """Parse messages from t.me/s/ public channel preview pages."""
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+        self._in_message = False
+        self._in_text = False
+        self._in_time = False
+        self._current_msg = {}
+        self._current_text_parts = []
+        self._msg_id = None
+    
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        classes = attrs_dict.get("class", "")
+        
+        if tag == "div" and "tgme_widget_message_wrap" in classes:
+            self._in_message = True
+            self._current_msg = {}
+            self._current_text_parts = []
+            self._msg_id = None
+        
+        if self._in_message:
+            if tag == "div" and "tgme_widget_message " in (classes + " "):
+                data_post = attrs_dict.get("data-post", "")
+                if "/" in data_post:
+                    self._msg_id = data_post.split("/")[-1]
+            
+            if tag == "div" and "tgme_widget_message_text" in classes:
+                self._in_text = True
+                self._current_text_parts = []
+            
+            if tag == "time" and "datetime" in attrs_dict:
+                self._current_msg["datetime"] = attrs_dict["datetime"]
+            
+            if tag == "br" and self._in_text:
+                self._current_text_parts.append("\n")
+    
+    def handle_data(self, data):
+        if self._in_text:
+            self._current_text_parts.append(data)
+    
+    def handle_endtag(self, tag):
+        if tag == "div" and self._in_text:
+            self._in_text = False
+            self._current_msg["text"] = "".join(self._current_text_parts).strip()
+        
+        if tag == "div" and self._in_message and self._current_msg.get("text"):
+            if self._msg_id:
+                self._current_msg["id"] = self._msg_id
+            self.messages.append(self._current_msg)
+            self._in_message = False
+            self._current_msg = {}
+
+# Track last seen message IDs per channel to detect new messages
+telegram_last_seen_ids = {ch: set() for ch in TELEGRAM_CHANNELS}
+telegram_initialized = {ch: False for ch in TELEGRAM_CHANNELS}
+
+async def scrape_telegram_channel(channel_name, channel_config):
+    """Scrape latest messages from a public Telegram channel via t.me/s/."""
+    url = channel_config["url"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    
+    async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as http_client:
+        try:
+            resp = await http_client.get(url, headers=headers)
+            if resp.status_code != 200:
+                return []
+            
+            parser = TelegramPageParser()
+            parser.feed(resp.text)
+            
+            results = []
+            for msg in parser.messages:
+                text = msg.get("text", "").strip()
+                dt_str = msg.get("datetime", "")
+                msg_id = msg.get("id", "")
+                
+                if not text:
+                    continue
+                
+                # Parse datetime
+                try:
+                    msg_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                    msg_dt = msg_dt.astimezone(local_tz)
+                except Exception:
+                    msg_dt = datetime.now(local_tz)
+                
+                results.append({
+                    "text": text,
+                    "date": msg_dt.isoformat(),
+                    "id": msg_id,
+                    "channel": channel_name,
+                    "msg_dt": msg_dt,
+                })
+            
+            return results
+        except Exception as e:
+            print(f"⚠️ Error scraping {channel_name}: {e}")
+            return []
+
+
+async def process_shigurimsh_messages(messages, is_init=False):
+    """Process messages from shigurimsh channel (timing forecasts)."""
+    global latest_event, today_forecasts, today_messages
+    
+    now = datetime.now(local_tz)
+    cutoff = now - timedelta(hours=12)
+    
+    new_msgs = []
+    for msg in messages:
+        msg_dt = msg["msg_dt"]
+        if msg_dt < cutoff:
+            continue
+        
+        msg_id = msg["id"]
+        is_new = msg_id and msg_id not in telegram_last_seen_ids["shigurimsh"]
+        
+        if is_init or is_new:
+            new_msgs.append(msg)
+    
+    if not new_msgs:
+        return
+    
+    for msg in new_msgs:
+        msg_id = msg["id"]
+        if msg_id:
+            telegram_last_seen_ids["shigurimsh"].add(msg_id)
+        
+        text = msg["text"]
+        msg_dt = msg["msg_dt"]
+        
+        # Add to today's messages
+        exists = any(m.get("id") == msg_id for m in today_messages)
+        if not exists:
+            today_messages.insert(0, {
+                "text": text,
+                "date": msg_dt.isoformat(),
+                "id": msg_id,
+            })
+        
+        # Try to extract timing forecast
+        time_str = extract_time_from_text(text)
+        if time_str:
+            target_time = get_target_datetime(time_str, reference_time=msg_dt if is_init else None)
+            
+            # Add to today's forecasts
+            fc_exists = any(
+                f.get("target_time") == target_time.isoformat() and f.get("text") == text
+                for f in today_forecasts
+            )
+            if not fc_exists:
+                today_forecasts.append({
+                    "text": text,
+                    "target_time": target_time.isoformat(),
+                    "received_at": msg_dt.isoformat(),
+                })
+            
+            # Update latest event
+            latest_event = {
+                "text": text,
+                "target_time": target_time.isoformat(),
+                "has_data": True
+            }
+            
+            # Save to history
+            h_exists = any(
+                h.get("target_time") == target_time.isoformat() and h.get("text") == text
+                for h in alert_history
+            )
+            if not h_exists:
+                alert_history.insert(0, {
+                    "text": text,
+                    "target_time": target_time.isoformat(),
+                    "received_at": msg_dt.isoformat()
+                })
+                if len(alert_history) > MAX_HISTORY:
+                    alert_history.pop()
+            
+            # Broadcast to clients (only for NEW messages, not init)
+            if not is_init:
+                await manager.broadcast({
+                    "msg_type": "telegram_timing",
+                    **latest_event
+                })
+
+
+async def process_pikud_haoref_messages(messages, is_init=False):
+    """Process messages from PikudHaOref_all channel (official alerts).
+    
+    These messages contain real-time alerts with format like:
+    🚨ירי רקטות וטילים (5/3/2026) 2:28
+    ✈חדירת כלי טיס עוין (5/3/2026) 0:34
+    """
+    global telegram_pikud_active_alerts
+    
+    now = datetime.now(local_tz)
+    cutoff = now - timedelta(minutes=30)  # Only care about recent messages
+    
+    for msg in messages:
+        msg_id = msg["id"]
+        msg_dt = msg["msg_dt"]
+        text = msg["text"]
+        
+        if msg_dt < cutoff:
+            continue
+        
+        is_new = msg_id and msg_id not in telegram_last_seen_ids["PikudHaOref_all"]
+        if msg_id:
+            telegram_last_seen_ids["PikudHaOref_all"].add(msg_id)
+        
+        if not is_new and not is_init:
+            continue
+        
+        # Skip "event ended" messages and updates
+        if "האירוע הסתיים" in text:
+            continue
+        
+        # Parse alert type from the message
+        alert_type = None
+        alert_icon = "🚨"
+        alert_cat = 1
+        
+        if "ירי רקטות וטילים" in text:
+            alert_type = "missiles"
+            alert_icon = "🚀"
+            alert_cat = 1
+        elif "חדירת כלי טיס עוין" in text:
+            alert_type = "hostileAircraft"
+            alert_icon = "✈️"
+            alert_cat = 2
+        elif "חדירת מחבלים" in text:
+            alert_type = "terrorist"
+            alert_icon = "🔫"
+            alert_cat = 13
+        elif "מבזק" in text:
+            # "מבזק" = news flash / general alert
+            alert_type = "newsFlash"
+            alert_icon = "📢"
+            alert_cat = 10
+        else:
+            continue  # Skip messages we can't parse
+        
+        # Extract cities from message text (after area name line)
+        # Format: "אזור X\ncity1, city2, city3\nהיכנסו למרחב המוגן"
+        lines = text.split("\n")
+        cities = []
+        for line in lines:
+            line = line.strip()
+            # Skip header lines, instructions, and area headers
+            if not line:
+                continue
+            if any(skip in line for skip in ["היכנסו", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "מבזק", "אזור ", "בדקות הקרובות", "לשפר את", "לשהות בו", "בהמשך לדיווח"]):
+                continue
+            # This line likely contains city names
+            for city in line.split(","):
+                city = city.strip()
+                if city and len(city) > 1:
+                    # Remove timing info like "(מיידי)" or "(דקה וחצי)"
+                    city = re.sub(r'\(.*?\)', '', city).strip()
+                    if city:
+                        cities.append(city)
+        
+        if cities and is_new and not is_init:
+            # Create alert object matching the Oref format
+            cat_info = ALERT_CATEGORIES.get(alert_cat, ALERT_CATEGORIES.get(1, {}))
+            alert_key = f"tg_{alert_cat}_{msg_id}"
+            
+            alert_obj = {
+                "id": alert_key,
+                "cities": cities[:50],  # Limit cities
+                "title": cat_info.get("label", "התרעה"),
+                "desc": "",
+                "category": alert_cat,
+                "category_info": cat_info,
+                "timestamp": msg_dt.isoformat(),
+                "source": "telegram_pikud"
+            }
+            
+            # Add to persistent alerts with 30-min timer
+            add_persistent_alert(alert_obj)
+            
+            # Broadcast as oref_alert (same format the frontend expects)
+            await manager.broadcast({
+                "msg_type": "oref_alert",
+                "alert": alert_obj,
+                "is_new": True
+            })
+
+
+async def telegram_polling_loop():
+    """Background task: poll Telegram channels via web scraping."""
+    print("📱 Starting Telegram channel scraping (no auth needed)...")
+    
+    # Initial fetch for all channels
+    for ch_name, ch_config in TELEGRAM_CHANNELS.items():
+        try:
+            messages = await scrape_telegram_channel(ch_name, ch_config)
+            if messages:
+                if ch_config["type"] == "forecast":
+                    await process_shigurimsh_messages(messages, is_init=True)
+                elif ch_config["type"] == "official_alert":
+                    await process_pikud_haoref_messages(messages, is_init=True)
+                telegram_initialized[ch_name] = True
+                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages")
+        except Exception as e:
+            print(f"⚠️ Error initializing {ch_name}: {e}")
+    
+    # Continuous polling
+    while True:
+        await asyncio.sleep(TELEGRAM_POLL_INTERVAL)
+        for ch_name, ch_config in TELEGRAM_CHANNELS.items():
+            try:
+                messages = await scrape_telegram_channel(ch_name, ch_config)
+                if messages:
+                    if ch_config["type"] == "forecast":
+                        await process_shigurimsh_messages(messages, is_init=False)
+                    elif ch_config["type"] == "official_alert":
+                        await process_pikud_haoref_messages(messages, is_init=False)
+            except Exception as e:
+                print(f"⚠️ Error polling {ch_name}: {e}")
+
+# ==========================
+# Persistent Alert System (30-minute active window)
+# ==========================
+ALERT_PERSIST_SECONDS = 30 * 60  # 30 minutes
+persistent_alerts = {}  # alert_key -> {alert_obj, first_seen, last_seen}
+telegram_pikud_active_alerts = []  # Track alerts from Pikud HaOref Telegram
+
+def add_persistent_alert(alert_obj):
+    """Add or refresh a persistent alert. Alerts stay active for 30 minutes."""
+    key = alert_obj["id"]
+    now = datetime.now(local_tz)
+    
+    if key in persistent_alerts:
+        persistent_alerts[key]["last_seen"] = now
+        persistent_alerts[key]["alert"] = alert_obj
+    else:
+        persistent_alerts[key] = {
+            "alert": alert_obj,
+            "first_seen": now,
+            "last_seen": now,
+        }
+
+def get_all_active_alerts():
+    """Get all alerts that are still within their 30-minute persistence window."""
+    now = datetime.now(local_tz)
+    active = []
+    expired_keys = []
+    
+    for key, entry in persistent_alerts.items():
+        age = (now - entry["first_seen"]).total_seconds()
+        if age <= ALERT_PERSIST_SECONDS:
+            active.append(entry["alert"])
+        else:
+            expired_keys.append(key)
+    
+    # Clean up expired
+    for key in expired_keys:
+        del persistent_alerts[key]
+    
+    return active
+
+def has_active_missile_alert():
+    """Check if there's any active missile alert (category 1) - used to keep alerts until next missile event."""
+    for entry in persistent_alerts.values():
+        if entry["alert"].get("category") == 1:
+            age = (datetime.now(local_tz) - entry["first_seen"]).total_seconds()
+            if age <= ALERT_PERSIST_SECONDS:
+                return True
+    return False
 
 # ==========================
 # Pikud HaOref Polling Logic
 # ==========================
 oref_error_logged = False  # Log Oref error only once
 oref_first_success = False  # Log first successful fetch
-ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered "active"
+ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered "active" from Oref API
 
 async def fetch_oref_data():
     """Fetch alert data from Oref history API (works internationally, unlike Alerts.json).
@@ -493,11 +808,10 @@ async def fetch_oref_data():
             
             oref_recent_history = history_items
             
-            # --- Process active alerts ---
+            # --- Process active alerts (from Oref API) and add to persistent system ---
             if active_cities:
-                new_alerts = []
                 for cat, info in active_cities.items():
-                    alert_key = f"{cat}_{','.join(sorted(info['cities']))}"
+                    alert_key = f"oref_{cat}_{','.join(sorted(info['cities']))}"
                     
                     alert_obj = {
                         "id": alert_key,
@@ -506,9 +820,12 @@ async def fetch_oref_data():
                         "desc": "",
                         "category": cat,
                         "category_info": info["cat_info"],
-                        "timestamp": now.isoformat()
+                        "timestamp": now.isoformat(),
+                        "source": "oref"
                     }
-                    new_alerts.append(alert_obj)
+                    
+                    # Add to 30-minute persistent alerts
+                    add_persistent_alert(alert_obj)
                     
                     if alert_key not in oref_last_alert_ids:
                         oref_last_alert_ids.add(alert_key)
@@ -520,15 +837,18 @@ async def fetch_oref_data():
                             "alert": alert_obj,
                             "is_new": True
                         })
-                
-                oref_active_alerts = new_alerts
-            else:
-                if oref_active_alerts:
-                    oref_active_alerts = []
-                    await manager.broadcast({
-                        "msg_type": "oref_clear",
-                        "alerts": []
-                    })
+            
+            # --- Check persistent alerts (30-min window) ---
+            all_active = get_all_active_alerts()
+            prev_had_alerts = len(oref_active_alerts) > 0
+            oref_active_alerts = all_active
+            
+            # If all alerts have expired (were active, now empty), send clear
+            if prev_had_alerts and not all_active:
+                await manager.broadcast({
+                    "msg_type": "oref_clear",
+                    "alerts": []
+                })
             
             # Reset error flag on success
             if oref_error_logged:
@@ -550,78 +870,10 @@ async def oref_polling_loop():
 
 @app.on_event("startup")
 async def startup_event():
-    # Connect to Telegram in the background
-    telegram_ok = False
-    try:
-        await client.connect()
-        is_authorized = await client.is_user_authorized()
-        
-        if not is_authorized:
-            print("❌ Telegram לא מאומת. מחק session.session והרץ auth_telegram.py")
-            telegram_ok = False
-        else:
-            print("✅ Telegram מחובר")
-            telegram_ok = True
-    except Exception as e:
-        print(f"❌ Telegram connection failed: {e}")
-
-    # Fetch today's messages from the channel (only if authorized)
-    if telegram_ok:
-        await fetch_today_telegram_messages()
-
-    if telegram_ok:
-        @client.on(events.NewMessage(chats=channel_username))
-        async def handler(event):
-            global latest_event
-            text = event.raw_text
-            msg_date = event.date.astimezone(local_tz) if event.date else datetime.now(local_tz)
-
-            # Add to today's messages
-            today_messages.insert(0, {
-                "text": text,
-                "date": msg_date.isoformat(),
-                "id": event.id,
-            })
-
-            time_str = extract_time_from_text(text)
-            if time_str:
-
-                target_time = get_target_datetime(time_str)
-                
-                # Update our state
-                latest_event = {
-                    "text": text,
-                    "target_time": target_time.isoformat(),
-                    "has_data": True
-                }
-
-                # Save to history
-                history_entry = {
-                    "text": text,
-                    "target_time": target_time.isoformat(),
-                    "received_at": datetime.now(local_tz).isoformat()
-                }
-                alert_history.insert(0, history_entry)
-                if len(alert_history) > MAX_HISTORY:
-                    alert_history.pop()
-                
-                # Add to today's forecasts for stats
-                today_forecasts.append({
-                    "text": text,
-                    "target_time": target_time.isoformat(),
-                    "received_at": msg_date.isoformat(),
-                })
-                
-                # Broadcast to all connected clients
-                await manager.broadcast({
-                    "msg_type": "telegram_timing",
-                    **latest_event
-                })
-
-        # Run Telethon in the background without blocking FastAPI
-        asyncio.create_task(client.run_until_disconnected())
+    # Start Telegram channel scraping (no auth needed)
+    asyncio.create_task(telegram_polling_loop())
     
-    # Start Pikud HaOref polling in background
+    # Start Pikud HaOref API polling in background
     asyncio.create_task(oref_polling_loop())
 
 @app.get("/")
@@ -687,6 +939,4 @@ async def websocket_endpoint(websocket: WebSocket):
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 if __name__ == "__main__":
-    # Note: Make sure you have authenticated your Telegram session once 
-    # normally before running uvicorn, so the 'session.session' file exists!
     uvicorn.run(app, host="0.0.0.0", port=PORT)
