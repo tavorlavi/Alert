@@ -292,7 +292,7 @@ def compute_stats():
             })
     
     # Summary stats
-    total_forecasts = len(today_forecasts)
+    total_forecasts = len(comparisons)  # Deduplicated forecast count
     total_alerts = len(alert_rounds)
     matched = len([c for c in comparisons if c["matched"]])
     avg_diff = None
@@ -350,6 +350,8 @@ class TelegramPageParser(HTMLParser):
         self._current_msg = {}
         self._current_text_parts = []
         self._msg_id = None
+        self._div_depth = 0       # Track nested div depth inside a message
+        self._text_div_depth = 0   # Track div depth when text started
     
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
@@ -360,8 +362,12 @@ class TelegramPageParser(HTMLParser):
             self._current_msg = {}
             self._current_text_parts = []
             self._msg_id = None
+            self._div_depth = 0
         
         if self._in_message:
+            if tag == "div":
+                self._div_depth += 1
+            
             if tag == "div" and "tgme_widget_message " in (classes + " "):
                 data_post = attrs_dict.get("data-post", "")
                 if "/" in data_post:
@@ -370,6 +376,7 @@ class TelegramPageParser(HTMLParser):
             if tag == "div" and "tgme_widget_message_text" in classes:
                 self._in_text = True
                 self._current_text_parts = []
+                self._text_div_depth = self._div_depth
             
             if tag == "time" and "datetime" in attrs_dict:
                 self._current_msg["datetime"] = attrs_dict["datetime"]
@@ -382,16 +389,24 @@ class TelegramPageParser(HTMLParser):
             self._current_text_parts.append(data)
     
     def handle_endtag(self, tag):
-        if tag == "div" and self._in_text:
-            self._in_text = False
-            self._current_msg["text"] = "".join(self._current_text_parts).strip()
-        
-        if tag == "div" and self._in_message and self._current_msg.get("text"):
-            if self._msg_id:
-                self._current_msg["id"] = self._msg_id
-            self.messages.append(self._current_msg)
-            self._in_message = False
-            self._current_msg = {}
+        if not self._in_message:
+            return
+            
+        if tag == "div":
+            # Close the text region when we return to the div depth where text started
+            if self._in_text and self._div_depth == self._text_div_depth:
+                self._in_text = False
+                self._current_msg["text"] = "".join(self._current_text_parts).strip()
+            
+            self._div_depth -= 1
+            
+            # When div_depth goes to 0, the outer message_wrap div is closed
+            if self._div_depth <= 0 and self._current_msg.get("text"):
+                if self._msg_id:
+                    self._current_msg["id"] = self._msg_id
+                self.messages.append(self._current_msg)
+                self._in_message = False
+                self._current_msg = {}
 
 # Track last seen message IDs per channel to detect new messages
 telegram_last_seen_ids = {ch: set() for ch in TELEGRAM_CHANNELS}
@@ -652,6 +667,22 @@ async def process_pikud_haoref_messages(messages, is_init=False):
             # Unknown message type — skip
             continue
         
+        # --- Extract the actual alert time from message text ---
+        # Format in messages: (D/M/YYYY) H:MM  e.g. (5/3/2026) 2:28
+        alert_time_match = re.search(r'\((\d{1,2})/(\d{1,2})/(\d{4})\)\s*(\d{1,2}):(\d{2})', text)
+        if alert_time_match:
+            day = int(alert_time_match.group(1))
+            month = int(alert_time_match.group(2))
+            year = int(alert_time_match.group(3))
+            hour = int(alert_time_match.group(4))
+            minute = int(alert_time_match.group(5))
+            try:
+                alert_dt = datetime(year, month, day, hour, minute, 0, tzinfo=local_tz)
+            except Exception:
+                alert_dt = msg_dt
+        else:
+            alert_dt = msg_dt
+        
         # --- Extract cities from message ---
         lines = text.split("\n")
         cities = []
@@ -676,7 +707,7 @@ async def process_pikud_haoref_messages(messages, is_init=False):
                         cities.append(city)
         
         # --- Add each city to today_real_alerts for stats ---
-        alert_date_str = msg_dt.strftime("%Y-%m-%d %H:%M:%S")
+        alert_date_str = alert_dt.strftime("%Y-%m-%d %H:%M:%S")
         cat_info = ALERT_CATEGORIES.get(alert_cat, ALERT_CATEGORIES.get(1, {}))
         
         for city in cities:
@@ -714,7 +745,7 @@ async def process_pikud_haoref_messages(messages, is_init=False):
                 "desc": "",
                 "category": alert_cat,
                 "category_info": cat_info,
-                "timestamp": msg_dt.isoformat(),
+                "timestamp": alert_dt.isoformat(),
                 "source": "telegram_pikud"
             }
             
