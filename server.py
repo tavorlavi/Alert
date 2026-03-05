@@ -1020,6 +1020,21 @@ async def get_today_messages():
     """REST endpoint to get all today's channel messages."""
     return today_messages
 
+@app.get("/api/debug")
+async def get_debug():
+    """Debug endpoint to inspect parsed data."""
+    return {
+        "today_forecasts_count": len(today_forecasts),
+        "today_forecasts": today_forecasts[:20],
+        "today_real_alerts_count": len(today_real_alerts),
+        "today_real_alerts_sample": today_real_alerts[:30],
+        "today_real_alerts_cat1": [a for a in today_real_alerts if a.get("category") == 1][:20],
+        "today_messages_count": len(today_messages),
+        "today_messages_sample": today_messages[:10],
+        "telegram_initialized": telegram_initialized,
+        "stats": compute_stats(),
+    }
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
