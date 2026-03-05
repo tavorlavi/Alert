@@ -128,7 +128,8 @@ ALERT_CATEGORIES = {
     6: {"type": "hostileAircraft", "icon": "✈️", "label": "חדירת כלי טיס עוין", "color": "orange"},
     7: {"type": "hazardous", "icon": "☣️", "label": "חומרים מסוכנים", "color": "green"},
     10: {"type": "newsFlash", "icon": "📢", "label": "מבזק", "color": "blue"},
-    13: {"type": "terrorist", "icon": "🔫", "label": "חדירת מחבלים", "color": "red"},
+    13: {"type": "eventEnded", "icon": "✅", "label": "האירוע הסתיים", "color": "gray"},
+    14: {"type": "earlyWarning", "icon": "⚠️", "label": "בדקות הקרובות צפויות להתקבל התרעות באזורך", "color": "yellow"},
 }
 
 # Oref state
@@ -396,12 +397,13 @@ class TelegramPageParser(HTMLParser):
 telegram_last_seen_ids = {ch: set() for ch in TELEGRAM_CHANNELS}
 telegram_initialized = {ch: False for ch in TELEGRAM_CHANNELS}
 
-async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
+async def scrape_telegram_channel(channel_name, channel_config, max_pages=1, cutoff_dt=None):
     """Scrape latest messages from a public Telegram channel via t.me/s/.
     
     Args:
         max_pages: Number of pages to load. Each page has ~20 messages.
                    Use max_pages>1 during init to load more history.
+        cutoff_dt: Stop paginating when messages are older than this datetime.
     """
     url = channel_config["url"]
     headers = {
@@ -412,6 +414,7 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
         try:
             all_results = []
             oldest_msg_id = None
+            reached_cutoff = False
             
             for page in range(max_pages):
                 if page == 0:
@@ -452,6 +455,11 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
                     except Exception:
                         msg_dt = datetime.now(local_tz)
                     
+                    # Stop if message is older than cutoff
+                    if cutoff_dt and msg_dt < cutoff_dt:
+                        reached_cutoff = True
+                        continue
+                    
                     page_results.append({
                         "text": text,
                         "date": msg_dt.isoformat(),
@@ -461,6 +469,9 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
                     })
                 
                 all_results.extend(page_results)
+                
+                if reached_cutoff:
+                    break
                 
                 # Find the oldest message ID for pagination
                 # Message IDs from t.me/s/ are like "123" (numeric)
@@ -483,6 +494,9 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1):
                 # Small delay between pagination requests
                 if page < max_pages - 1:
                     await asyncio.sleep(0.3)
+            
+            if max_pages > 1:
+                print(f"   📄 {channel_name}: scraped {page + 1} pages, {len(all_results)} messages" + (" (reached 12h cutoff)" if reached_cutoff else ""))
             
             return all_results
         except Exception as e:
@@ -578,13 +592,18 @@ async def process_shigurimsh_messages(messages, is_init=False):
 async def process_pikud_haoref_messages(messages, is_init=False):
     """Process messages from PikudHaOref_all channel (official alerts).
     
-    Only processes messages containing "בדקות הקרובות צפויות להתקבל התרעות באזורך"
-    which are the early warning messages before missile strikes.
+    Handles ALL message types:
+    - 🚨ירי רקטות וטילים  → category 1 (missiles)
+    - ✈חדירת כלי טיס עוין → category 2 (hostile aircraft)  
+    - 🚨מבזק + בדקות הקרובות → category 14 (early warning)
+    - 🚨עדכון + האירוע הסתיים → category 13 (event ended)
+    
+    Populates today_real_alerts for stats and triggers live alerts.
     """
-    global telegram_pikud_active_alerts, today_messages
+    global telegram_pikud_active_alerts, today_messages, today_real_alerts
     
     now = datetime.now(local_tz)
-    cutoff = now - timedelta(hours=12)  # Match shigurimsh: last 12 hours
+    cutoff = now - timedelta(hours=12)
     
     for msg in messages:
         msg_id = msg["id"]
@@ -601,51 +620,97 @@ async def process_pikud_haoref_messages(messages, is_init=False):
         if not is_new and not is_init:
             continue
         
-        # Only process early warning messages
-        if "בדקות הקרובות צפויות להתקבל התרעות באזורך" not in text:
+        # --- Determine alert category from message text ---
+        alert_cat = None
+        title = ""
+        
+        if "ירי רקטות וטילים" in text:
+            if "האירוע הסתיים" in text:
+                alert_cat = 13
+                title = "ירי רקטות וטילים -  האירוע הסתיים"
+            else:
+                alert_cat = 1
+                title = "ירי רקטות וטילים"
+        elif "חדירת כלי טיס עוין" in text:
+            if "האירוע הסתיים" in text:
+                alert_cat = 13
+                title = "חדירת כלי טיס עוין - האירוע הסתיים"
+            else:
+                alert_cat = 2
+                title = "חדירת כלי טיס עוין"
+        elif "בדקות הקרובות צפויות להתקבל התרעות באזורך" in text:
+            alert_cat = 14
+            title = "בדקות הקרובות צפויות להתקבל התרעות באזורך"
+        elif "חדירת מחבלים" in text:
+            if "האירוע הסתיים" in text:
+                alert_cat = 13
+                title = "חדירת מחבלים - האירוע הסתיים"
+            else:
+                alert_cat = 3
+                title = "חדירת מחבלים"
+        else:
+            # Unknown message type — skip
             continue
         
-        # Add to today's messages for display (same as shigurimsh)
-        exists = any(m.get("id") == f"pikud_{msg_id}" for m in today_messages)
-        if not exists:
-            today_messages.insert(0, {
-                "text": f"[פיקוד העורף] {text}",
-                "date": msg_dt.isoformat(),
-                "id": f"pikud_{msg_id}",
-            })
-        
-        # These are missile early warnings - category 1
-        alert_cat = 1
-        
-        # Extract cities from message text (after area name line)
-        # Format: "אזור X\ncity1, city2, city3\nהיכנסו למרחב המוגן"
+        # --- Extract cities from message ---
         lines = text.split("\n")
         cities = []
         for line in lines:
             line = line.strip()
-            # Skip header lines, instructions, and area headers
             if not line:
                 continue
-            if any(skip in line for skip in ["היכנסו", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "מבזק", "אזור ", "בדקות הקרובות", "לשפר את", "לשהות בו", "בהמשך לדיווח"]):
+            # Skip header/instruction lines
+            if any(skip in line for skip in [
+                "היכנסו", "ירי רקטות", "חדירת כלי", "חדירת מחבלים",
+                "מבזק", "אזור ", "בדקות הקרובות", "לשפר את", "לשהות בו",
+                "בהמשך לדיווח", "עדכון", "האירוע הסתיים", "על תושבי",
+                "במקרה של", "יש להיכנס", "באזורים הבאים"
+            ]):
                 continue
             # This line likely contains city names
             for city in line.split(","):
                 city = city.strip()
                 if city and len(city) > 1:
-                    # Remove timing info like "(מיידי)" or "(דקה וחצי)"
                     city = re.sub(r'\(.*?\)', '', city).strip()
                     if city:
                         cities.append(city)
         
-        if cities and is_new and not is_init:
-            # Create alert object matching the Oref format
-            cat_info = ALERT_CATEGORIES.get(alert_cat, ALERT_CATEGORIES.get(1, {}))
+        # --- Add each city to today_real_alerts for stats ---
+        alert_date_str = msg_dt.strftime("%Y-%m-%d %H:%M:%S")
+        cat_info = ALERT_CATEGORIES.get(alert_cat, ALERT_CATEGORIES.get(1, {}))
+        
+        for city in cities:
+            exists = any(
+                a["alertDate"] == alert_date_str and a["city"] == city
+                for a in today_real_alerts
+            )
+            if not exists:
+                today_real_alerts.append({
+                    "alertDate": alert_date_str,
+                    "title": title,
+                    "city": city,
+                    "category": alert_cat,
+                    "category_info": cat_info,
+                })
+        
+        # --- Add to today's messages for display ---
+        display_id = f"pikud_{msg_id}"
+        exists = any(m.get("id") == display_id for m in today_messages)
+        if not exists:
+            today_messages.insert(0, {
+                "text": f"[פיקוד העורף] {text}",
+                "date": msg_dt.isoformat(),
+                "id": display_id,
+            })
+        
+        # --- Live alert broadcasting (only new real-time alerts, not init) ---
+        if cities and is_new and not is_init and alert_cat in (1, 2, 14):
             alert_key = f"tg_{alert_cat}_{msg_id}"
             
             alert_obj = {
                 "id": alert_key,
-                "cities": cities[:50],  # Limit cities
-                "title": cat_info.get("label", "התרעה"),
+                "cities": cities[:50],
+                "title": cat_info.get("label", title),
                 "desc": "",
                 "category": alert_cat,
                 "category_info": cat_info,
@@ -653,10 +718,8 @@ async def process_pikud_haoref_messages(messages, is_init=False):
                 "source": "telegram_pikud"
             }
             
-            # Add to persistent alerts with 30-min timer
             add_persistent_alert(alert_obj)
             
-            # Broadcast as oref_alert (same format the frontend expects)
             await manager.broadcast({
                 "msg_type": "oref_alert",
                 "alert": alert_obj,
@@ -668,18 +731,19 @@ async def telegram_polling_loop():
     """Background task: poll Telegram channels via web scraping."""
     print("📱 Starting Telegram channel scraping (no auth needed)...")
     
-    # Initial fetch for all channels — load multiple pages to cover ~12h of history
-    INIT_PAGES = 15  # ~20 messages per page = ~300 messages for 12h coverage
+    # Initial fetch for all channels — load up to 250 pages (~5000 messages) or 12h of history
+    INIT_PAGES = 250
+    cutoff_12h = datetime.now(local_tz) - timedelta(hours=12)
     for ch_name, ch_config in TELEGRAM_CHANNELS.items():
         try:
-            messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES)
+            messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES, cutoff_dt=cutoff_12h)
             if messages:
                 if ch_config["type"] == "forecast":
                     await process_shigurimsh_messages(messages, is_init=True)
                 elif ch_config["type"] == "official_alert":
                     await process_pikud_haoref_messages(messages, is_init=True)
                 telegram_initialized[ch_name] = True
-                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages ({INIT_PAGES} pages)")
+                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages")
         except Exception as e:
             print(f"⚠️ Error initializing {ch_name}: {e}")
     
@@ -844,16 +908,6 @@ async def fetch_oref_data():
                         active_cities[cat] = {"title": title, "cat_info": cat_info, "cities": []}
                     if city not in active_cities[cat]["cities"]:
                         active_cities[cat]["cities"].append(city)
-                
-                # --- Accumulate alerts from last 12 hours for stats ---
-                cutoff_12h = now - timedelta(hours=12)
-                if alert_dt >= cutoff_12h:
-                    exists = any(
-                        a["alertDate"] == alert_date_normalized and a["city"] == city
-                        for a in today_real_alerts
-                    )
-                    if not exists:
-                        today_real_alerts.append(alert_item)
             
             oref_recent_history = history_items
             
