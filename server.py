@@ -4,13 +4,13 @@ import asyncio
 import httpx
 from datetime import datetime, timedelta
 from dateutil import tz
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 from html.parser import HTMLParser
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 # Load .env file for local development (ignored in production)
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -34,10 +34,15 @@ TELEGRAM_CHANNELS = {
         "type": "forecast",  # This channel provides timing forecasts
         "label": "שיגורים מהשנייה"
     },
-    "PikudHaOref_all": {
-        "url": "https://t.me/s/PikudHaOref_all",
-        "type": "official_alert",  # Official Pikud HaOref alerts
-        "label": "פיקוד העורף"
+    "alert_Real_Time": {
+        "url": "https://t.me/s/alert_Real_Time",
+        "type": "forecast",
+        "label": "Alert Real Time"
+    },
+    "beforeredalert": {
+        "url": "https://t.me/s/beforeredalert",
+        "type": "forecast",
+        "label": "Before Red Alert"
     }
 }
 TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
@@ -45,17 +50,6 @@ TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
 
 local_tz = tz.gettz("Asia/Jerusalem")
 app = FastAPI()
-
-# Serve static files (CSS, JS, images)
-static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-os.makedirs(static_dir, exist_ok=True)
-
-# Load city coordinates for the map
-city_coords_path = os.path.join(static_dir, "cities.json")
-city_coords = {}
-if os.path.exists(city_coords_path):
-    with open(city_coords_path, "r", encoding="utf-8") as f:
-        city_coords = json.load(f)
 
 # Allow connections from any origin
 app.add_middleware(
@@ -66,33 +60,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebSocket connection manager for real-time updates
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                pass
-
-manager = ConnectionManager()
-
 # Store the latest event so new users see it immediately when they open the site
 latest_event = {
-    "text": "ממתין לעדכונים...", 
+    "text": "ממתין לעדכונים...",
     "target_time": None,
     "has_data": False
 }
+
+channel_last_areas = {}      # Track last areas mentioned by channel to group updates
+active_alerts_by_area = {}   # Track current active alerts per individual area
 
 # Store alert history (last 50 alerts)
 alert_history = []
@@ -102,40 +78,14 @@ MAX_HISTORY = 50
 # Today's data for statistics
 # ==========================
 today_forecasts = []      # All "צפי" messages from today: [{text, target_time, received_at, raw_text}]
-today_real_alerts = []    # All real alerts from today (from Oref history): [{alertDate, title, city, category}]
 today_messages = []       # ALL messages from the channel today (for display)
+PENDING_COMBINE_WINDOW_MINUTES = 5  # window to merge separate time/area messages
 
-# ==========================
-# Pikud HaOref (Home Front Command) API
-# ==========================
-OREF_HISTORY_URL = "https://alerts-history.oref.org.il/Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=2"
-OREF_HISTORY_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.oref.org.il/",
+# Pending partial forecasts per channel when time and areas arrive in separate messages
+pending_forecast_parts = {
+    ch: {"time": None, "areas": None}
+    for ch in TELEGRAM_CHANNELS
 }
-
-OREF_POLL_INTERVAL = 2  # seconds between polls
-
-# Alert category mapping
-ALERT_CATEGORIES = {
-    1: {"type": "missiles", "icon": "🚀", "label": "ירי רקטות וטילים", "color": "red"},
-    2: {"type": "hostileAircraft", "icon": "✈️", "label": "חדירת כלי טיס עוין", "color": "orange"},
-    3: {"type": "general", "icon": "⚠️", "label": "אירוע כללי", "color": "amber"},
-    4: {"type": "radiological", "icon": "☢️", "label": "אירוע רדיולוגי", "color": "purple"},
-    5: {"type": "tsunami", "icon": "🌊", "label": "צונאמי", "color": "blue"},
-    6: {"type": "hostileAircraft", "icon": "✈️", "label": "חדירת כלי טיס עוין", "color": "orange"},
-    7: {"type": "hazardous", "icon": "☣️", "label": "חומרים מסוכנים", "color": "green"},
-    10: {"type": "newsFlash", "icon": "📢", "label": "מבזק", "color": "blue"},
-    13: {"type": "eventEnded", "icon": "✅", "label": "האירוע הסתיים", "color": "gray"},
-    14: {"type": "earlyWarning", "icon": "⚠️", "label": "בדקות הקרובות צפויות להתקבל התרעות באזורך", "color": "yellow"},
-}
-
-# Oref state
-oref_active_alerts = []     # Currently active alerts from Alerts.json
-oref_recent_history = []    # Recent history from AlertsHistory.json (last 50)
-oref_last_alert_ids = set() # Track which alerts we already broadcasted
 
 def extract_time_from_text(text):
     match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', text)
@@ -150,6 +100,233 @@ def clean_forecast_text(text):
     # Remove extra newlines and whitespace  
     text = re.sub(r'\n{2,}', '\n', text).strip()
     return text
+
+def extract_expected_time_text(text):
+    """Extract expected duration expressions like '5 דקות' or '35 שניות' or '4.5 דקות'."""
+    m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', text)
+    if not m:
+        return None
+    num = m.group(1)
+    unit = m.group(2)
+    if num:
+        return f"{num} {unit}"
+    else:
+        return unit
+
+def _to_expected_seconds(expected_time_text):
+    if not expected_time_text:
+        return None
+    m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', expected_time_text)
+    if not m:
+        return None
+    
+    num_str = m.group(1)
+    unit = m.group(2)
+    
+    if num_str:
+        value = float(num_str)
+    else:
+        value = 1.0 # default for "דקה" or "שניה"
+        
+    if unit in ("דקות", "דקה"):
+        return int(value * 60)
+    return int(value)
+
+KNOWN_AREAS = [
+    "מרכז", "צפון", "דרום", "עוטף עזה", "שרון", "שפלה", "גוש דן",
+    "יהודה", "הגליל", "גליל", "הגולן", "גולן", "קריות", "עמק יזרעאל",
+    "ים המלח", "הערבה", "מפרץ", "בקעה", "המדבר", "גליל עליון",
+    "גליל תחתון", "גליל מערבי", "האזור", "עוטף", "מירון", "כיש"
+]
+
+def clean_hebrew_city(city_name):
+    """Clean government city DB noise (like parentheses or double spaces)"""
+    name = re.sub(r'\(.*?\)', '', city_name)
+    # Replace hyphens with spaces for easier matching
+    name = name.replace('-', ' ')
+    name = re.sub(r'[^\w\sא-ת]', '', name)
+    return ' '.join(name.split())
+
+def extract_areas_from_text(text):
+    """Extract area-like phrases from text (e.g., מרכז, אילת, מאשדוד עד נתניה)."""
+    areas = []
+    seen = set()
+    
+    # Exclude common non-area words
+    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע"}
+    
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if any(skip in line for skip in [
+            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "כרגע", "לכרגע", "פרטים", "נוספים"
+        ]):
+            continue
+            
+        # Skip lines that are clearly purely metadata lines
+        if line.startswith("צפי") and len(line) < 15:
+            continue
+            
+        # Strip exact time formats and time units so they don't become areas
+        line = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line)
+        line = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line)
+        line = re.sub(r'צפי|משך|עוד|לאזעקה', '', line)
+        line = re.sub(r'[*_Ã°Å¸Å¡Â¨Ã¢Å“â€¦Ã¢Å¡Â Ã¯Â¸ÂÃ¢â€ºâ€Ã¯Â¸ÂÃ°Å¸â€˜â€¡Ã°Å¸â€œÂ\.]', '', line)
+        
+        for part in re.split(r'[,/|\-\n]', line):
+            part = re.sub(r'\(.*?\)', '', part).strip()
+            
+            # Extract recognized predefined areas
+            found_known = False
+            for ka in KNOWN_AREAS:
+                # Allow standard Hebrew prefixes on regions
+                if re.search(r'(?<![א-ת])(?:[בלמהמש])?' + ka + r'(?![א-ת])', part):
+                    if ka not in seen:
+                        seen.add(ka)
+                        areas.append(ka)
+                    found_known = True
+                    break # Stop looping once the longest match is found
+
+            if not found_known:
+                # Remove excluded words
+                words = [w for w in part.split() if w not in exclude_words and w != "ו"]
+                cleaned_area = " ".join(words).strip()
+                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|גם\sל|גם\sב|ל|ב)', '', cleaned_area).strip()
+                
+                # Short generic words aren't areas usually
+                if not cleaned_area or len(cleaned_area) < 2 or len(cleaned_area.split()) > 3:
+                    continue
+                    
+                if cleaned_area in seen:
+                    continue
+                seen.add(cleaned_area)
+                areas.append(cleaned_area)
+            
+    return areas
+
+def extract_forecast_data(text):
+    """Unify and extract forecast data from a message, returning a list of alerts.
+    Each alert is: {"areas": [...], "clock_time": str, "expected_time_text": str, "expected_seconds": int}
+    """
+    alerts = []
+    
+    # Exclude common non-area words
+    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו"}
+    
+    lines = re.split(r'\n|\.\s+', text)
+    
+    global_clock_time = None
+    global_expected_text = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+            
+        if any(skip in line.lower() for skip in [
+            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "כרגע", "לכרגע", "פרטים", "נוספים",
+            "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "מספר", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "מיקוד", "ארוך טווח"
+        ]):
+            continue
+            
+        clock_m = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', line)
+        line_clock_time = clock_m.group(1) if clock_m else None
+        
+        expected_m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', line)
+        line_expected_text = expected_m.group(0) if expected_m else None
+        
+        if line_clock_time: global_clock_time = line_clock_time
+        if line_expected_text: global_expected_text = line_expected_text
+            
+        line_clean = line
+        line_clean = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line_clean)
+        line_clean = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line_clean)
+        line_clean = re.sub(r'צפי|משך|עוד|לאזעקה', '', line_clean)
+        line_clean = re.sub(r'[*_Ã°Å¸Å¡Â¨Ã¢Å“â€¦Ã¢Å¡Â Ã¯Â¸ÂÃ¢â€ºâ€Ã¯Â¸ÂÃ°Å¸â€˜â€¡Ã°Å¸â€œÂ\.]', '', line_clean)
+        
+        line_areas = []
+        for part in re.split(r'[,/|\-\n]', line_clean):
+            part = re.sub(r'\(.*?\)', '', part).strip()
+            
+            # Check against KNOWN_AREAS first
+            found_known = False
+            for ka in KNOWN_AREAS:
+                # Match as a whole word (allowing Hebrew prefixes like 'ב','ל','מ','ה' dynamically)
+                if re.search(r'(?<![א-ת])(?:[בלמהמש])?' + ka + r'(?![א-ת])', part):
+                    if ka not in line_areas:
+                        line_areas.append(ka)
+                    found_known = True
+                    break # Stop looping once the longest match is found
+                        
+        if line_areas:
+            alerts.append({
+                "areas": line_areas,
+                "clock_time": line_clock_time,
+                "expected_time_text": line_expected_text,
+                "expected_seconds": _to_expected_seconds(line_expected_text)
+            })
+            
+    if not alerts and (global_clock_time or global_expected_text):
+        alerts.append({
+            "areas": [],
+            "clock_time": global_clock_time,
+            "expected_time_text": global_expected_text,
+            "expected_seconds": _to_expected_seconds(global_expected_text)
+        })
+        
+    # Backfill missing times using global discovered times
+    for a in alerts:
+        if not a["clock_time"] and global_clock_time:
+            a["clock_time"] = global_clock_time
+        if not a["expected_time_text"] and global_expected_text:
+            a["expected_time_text"] = global_expected_text
+            a["expected_seconds"] = _to_expected_seconds(global_expected_text)
+        
+    return {
+        "raw_text": text,
+        "clean_text": clean_forecast_text(text),
+        "alerts": alerts
+    }
+
+
+def _store_pending_part(channel_name, part_type, payload):
+    if channel_name not in pending_forecast_parts:
+        pending_forecast_parts[channel_name] = {"time": None, "areas": None}
+    pending_forecast_parts[channel_name][part_type] = payload
+
+
+def _maybe_combine_pending(channel_name):
+    """Try to combine separate time/area messages within a short window."""
+    parts = pending_forecast_parts.get(channel_name, {})
+    t_part = parts.get("time")
+    a_part = parts.get("areas")
+    if not t_part or not a_part:
+        return None
+
+    delta = abs((t_part["msg_dt"] - a_part["msg_dt"]).total_seconds())
+    if delta > PENDING_COMBINE_WINDOW_MINUTES * 60:
+        # Drop the older part to allow fresher pairing
+        if t_part["msg_dt"] < a_part["msg_dt"]:
+            parts["time"] = None
+        else:
+            parts["areas"] = None
+        return None
+
+    combined_text = f"{t_part['text']}\n{a_part['text']}".strip()
+    combined = {
+        "text": combined_text,
+        "msg_dt": max(t_part["msg_dt"], a_part["msg_dt"]),
+        "id": f"{t_part.get('id','')}_{a_part.get('id','')}" or None,
+        "clock_time": t_part["clock_time"],
+        "expected_time_text": t_part.get("expected_time_text"),
+        "expected_seconds": t_part.get("expected_seconds"),
+        "areas": a_part["areas"],
+    }
+
+    # Clear after successful combine
+    parts["time"] = None
+    parts["areas"] = None
+    return combined
 
 def get_target_datetime(target_time_str, reference_time=None):
     """Convert a time string like '16:12' to a datetime.
@@ -171,178 +348,6 @@ def get_target_datetime(target_time_str, reference_time=None):
         target_time += timedelta(days=1)
 
     return target_time
-
-# (Telegram message fetching is now handled by telegram_polling_loop via web scraping)
-
-
-def compute_stats():
-    """Compare last 12 hours of forecasts vs real alerts to produce accuracy statistics."""
-    now = datetime.now(local_tz)
-    today_str = now.strftime("%Y-%m-%d")
-    cutoff_12h = now - timedelta(hours=12)
-    
-    # Use accumulated today_real_alerts (last 12h, persists across Oref history rotations)
-    # Filter to only last 12 hours
-    real_alerts_recent = [
-        a for a in today_real_alerts
-        if a.get("alertDate", "") >= cutoff_12h.strftime("%Y-%m-%d %H:%M:%S")
-    ]
-    
-    # Group real alerts by time (within 1 min window) to get unique "alert rounds"
-    # Only include MISSILE alerts (category 1) for forecast matching,
-    # since forecasts from shigurimsh are specifically about missile launches
-    alert_rounds = []
-    for item in real_alerts_recent:
-        cat = item.get("category", 1)
-        if cat != 1:
-            continue  # Skip non-missile alerts (aircraft, earthquake, etc.)
-        
-        alert_date_str = item.get("alertDate", "")
-        try:
-            alert_dt = datetime.strptime(alert_date_str, "%Y-%m-%d %H:%M:%S")
-            alert_dt = alert_dt.replace(tzinfo=local_tz)
-        except Exception:
-            continue
-        
-        # Check if this belongs to an existing round (within 2 minutes)
-        found = False
-        for rnd in alert_rounds:
-            if abs((alert_dt - rnd["time"]).total_seconds()) < 120:
-                rnd["cities"].append(item.get("city", ""))
-                rnd["count"] += 1
-                found = True
-                break
-        if not found:
-            alert_rounds.append({
-                "time": alert_dt,
-                "time_str": alert_dt.strftime("%H:%M:%S"),
-                "title": item.get("title", ""),
-                "cities": [item.get("city", "")],
-                "count": 1,
-                "category": cat,
-            })
-    
-    # Sort rounds by time
-    alert_rounds.sort(key=lambda r: r["time"])
-    
-    # Find oldest alert time (to know data coverage boundary)
-    oldest_alert_time = alert_rounds[0]["time"] if alert_rounds else None
-    
-    # Build comparison: match each forecast to the closest real alert
-    # Deduplicate forecasts by target_time (same time = same prediction)
-    comparisons = []
-    used_rounds = set()
-    seen_forecast_times = set()
-    
-    for fc in today_forecasts:
-        try:
-            fc_time = datetime.fromisoformat(fc["target_time"])
-            if fc_time.tzinfo is None:
-                fc_time = fc_time.replace(tzinfo=local_tz)
-        except Exception:
-            continue
-        
-        fc_time_key = fc_time.strftime("%H:%M")
-        if fc_time_key in seen_forecast_times:
-            continue  # Skip duplicate forecasts for the same time
-        seen_forecast_times.add(fc_time_key)
-        
-        best_match = None
-        best_diff = None
-        best_idx = None
-        
-        for idx, rnd in enumerate(alert_rounds):
-            if idx in used_rounds:
-                continue
-            diff = abs((rnd["time"] - fc_time).total_seconds())
-            if best_diff is None or diff < best_diff:
-                best_diff = diff
-                best_match = rnd
-                best_idx = idx
-        
-        comparison = {
-            "forecast_text": fc["text"],
-            "forecast_time": fc_time_key,
-            "received_at": fc.get("received_at", ""),
-        }
-        
-        # Match only if within 3 minutes (180 seconds) — tighter window to avoid false matches
-        if best_match and best_diff is not None and best_diff < 180:
-            used_rounds.add(best_idx)
-            diff_minutes = (best_match["time"] - fc_time).total_seconds() / 60
-            comparison["real_time"] = best_match["time_str"]
-            comparison["real_title"] = best_match["title"]
-            comparison["real_cities_count"] = best_match["count"]
-            comparison["diff_minutes"] = round(diff_minutes, 1)
-            comparison["diff_label"] = _format_diff(diff_minutes)
-            comparison["matched"] = True
-        else:
-            comparison["real_time"] = None
-            comparison["matched"] = False
-            comparison["diff_minutes"] = None
-            # If forecast is older than our oldest Oref data, show "no data"
-            if oldest_alert_time and fc_time < oldest_alert_time:
-                comparison["diff_label"] = "אין מידע"
-            else:
-                comparison["diff_label"] = "ללא התרעה תואמת"
-        
-        comparisons.append(comparison)
-    
-    # Unmatched real alerts (missile alerts with no forecast)
-    unmatched_alerts = []
-    for idx, rnd in enumerate(alert_rounds):
-        if idx not in used_rounds and rnd.get("category") == 1:
-            unmatched_alerts.append({
-                "real_time": rnd["time_str"],
-                "title": rnd["title"],
-                "cities_count": rnd["count"],
-                "cities": rnd["cities"][:5],
-            })
-    
-    # Summary stats
-    total_forecasts = len(comparisons)  # Deduplicated forecast count
-    total_alerts = len(alert_rounds)
-    matched = len([c for c in comparisons if c["matched"]])
-    avg_diff = None
-    if matched > 0:
-        diffs = [abs(c["diff_minutes"]) for c in comparisons if c["matched"] and c["diff_minutes"] is not None]
-        avg_diff = round(sum(diffs) / len(diffs), 1) if diffs else None
-    
-    return {
-        "date": today_str,
-        "summary": {
-            "total_forecasts": total_forecasts,
-            "total_alert_rounds": total_alerts,
-            "matched": matched,
-            "unmatched_forecasts": total_forecasts - matched,
-            "unmatched_alerts": len(unmatched_alerts),
-            "avg_diff_minutes": avg_diff,
-        },
-        "comparisons": comparisons,
-        "unmatched_alerts": unmatched_alerts,
-        "today_messages_count": len(today_messages),
-    }
-
-
-def _format_diff(diff_minutes):
-    """Format time difference as a human-readable Hebrew string."""
-    abs_diff = abs(diff_minutes)
-    if abs_diff < 1:
-        return "⏱️ מדויק!"
-    
-    if abs_diff < 60:
-        mins = int(abs_diff)
-        label = f"{mins} דקות"
-    else:
-        hours = int(abs_diff // 60)
-        mins = int(abs_diff % 60)
-        label = f"{hours} שעות" + (f" ו-{mins} דקות" if mins > 0 else "")
-    
-    if diff_minutes > 0:
-        return f"⏰ ההתרעה איחרה ב-{label}"
-    else:
-        return f"⚡ ההתרעה הקדימה ב-{label}"
-
 
 # ==========================
 # Telegram Scraping (no auth needed - uses public t.me/s/ pages)
@@ -527,44 +532,45 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1, cut
                     await asyncio.sleep(0.3)
             
             if max_pages > 1:
-                print(f"   📄 {channel_name}: scraped {page + 1} pages, {len(all_results)} messages" + (" (reached 12h cutoff)" if reached_cutoff else ""))
+                print(f"   Ã°Å¸â€œâ€ž {channel_name}: scraped {page + 1} pages, {len(all_results)} messages" + (" (reached 12h cutoff)" if reached_cutoff else ""))
             
             return all_results
         except Exception as e:
-            print(f"⚠️ Error scraping {channel_name}: {e}")
+            print(f"Ã¢Å¡Â Ã¯Â¸Â Error scraping {channel_name}: {e}")
             return []
 
 
-async def process_shigurimsh_messages(messages, is_init=False):
-    """Process messages from shigurimsh channel (timing forecasts)."""
+async def process_forecast_messages(messages, channel_name, is_init=False):
+    """Process forecast messages from forecast-only channels."""
     global latest_event, today_forecasts, today_messages
-    
+    global channel_last_areas, active_alerts_by_area
+
     now = datetime.now(local_tz)
     cutoff = now - timedelta(hours=12)
-    
+
     new_msgs = []
     for msg in messages:
         msg_dt = msg["msg_dt"]
         if msg_dt < cutoff:
             continue
-        
+
         msg_id = msg["id"]
-        is_new = msg_id and msg_id not in telegram_last_seen_ids["shigurimsh"]
-        
+        is_new = msg_id and msg_id not in telegram_last_seen_ids[channel_name]
+
         if is_init or is_new:
             new_msgs.append(msg)
-    
+
     if not new_msgs:
         return
-    
+
     for msg in new_msgs:
         msg_id = msg["id"]
         if msg_id:
-            telegram_last_seen_ids["shigurimsh"].add(msg_id)
-        
+            telegram_last_seen_ids[channel_name].add(msg_id)
+
         text = msg["text"]
         msg_dt = msg["msg_dt"]
-        
+
         # Add to today's messages
         exists = any(m.get("id") == msg_id for m in today_messages)
         if not exists:
@@ -573,591 +579,312 @@ async def process_shigurimsh_messages(messages, is_init=False):
                 "date": msg_dt.isoformat(),
                 "id": msg_id,
             })
-        
-        # Try to extract timing forecast
-        time_str = extract_time_from_text(text)
-        if time_str:
-            target_time = get_target_datetime(time_str, reference_time=msg_dt if is_init else None)
-            display_text = clean_forecast_text(text)
+
+        extracted = extract_forecast_data(text)
+        display_text = extracted.get("clean_text") or clean_forecast_text(text)
+        alerts = extracted.get("alerts", [])
+
+        # Gather areas from this message
+        msg_areas = []
+        for a in alerts:
+            msg_areas.extend(a["areas"])
+        # deduplicate maintaining order
+        msg_areas = list(dict.fromkeys(msg_areas))
+
+        inherited_areas = False
+        if msg_areas:
+            channel_last_areas[channel_name] = {
+                "areas": msg_areas,
+                "msg_dt": msg_dt
+            }
+        else:
+            # Try to inherit areas from the same channel if we have time info but no areas
+            last_info = channel_last_areas.get(channel_name)
+            if last_info:
+                time_diff = (msg_dt - last_info["msg_dt"]).total_seconds()
+                if time_diff <= 15 * 60: # up to 15 min channel inheritance
+                    msg_areas = last_info["areas"]
+                    inherited_areas = True
+                    # Apply inherited areas to alerts that lack them
+                    for a in alerts:
+                        if not a.get("areas"):
+                            a["areas"] = list(msg_areas)
+
+        forecast_areas_for_history = []
+
+        for a in alerts:
+            # If after inheritance we still have no areas and no time, skip
+            if not a["areas"] and not a["clock_time"] and a.get("expected_seconds") is None:
+                continue
             
-            # Add to today's forecasts
-            fc_exists = any(
-                f.get("target_time") == target_time.isoformat() and f.get("text") == text
-                for f in today_forecasts
-            )
-            if not fc_exists:
-                today_forecasts.append({
-                    "text": text,
-                    "target_time": target_time.isoformat(),
-                    "received_at": msg_dt.isoformat(),
-                })
+            # calculate target time
+            a_target_time = None
+            if a.get("clock_time"):
+                target_dt = get_target_datetime(a["clock_time"], reference_time=msg_dt if is_init else None)
+                a_target_time = target_dt.isoformat()
+            elif a.get("expected_seconds") is not None:
+                target_dt = msg_dt + timedelta(seconds=a["expected_seconds"])
+                a_target_time = target_dt.isoformat()
+                
+            a["target_time"] = a_target_time
             
-            # Update latest event — but only if this forecast is still relevant
-            # During init: skip forecasts whose target_time is more than 15 min in the past
-            # During polling: always update (it's the freshest data)
-            forecast_is_relevant = True
-            if is_init:
-                age_past_target = (now - target_time).total_seconds()
-                if age_past_target > 15 * 60:  # More than 15 min after target time
-                    forecast_is_relevant = False
-            
-            if forecast_is_relevant:
-                latest_event = {
+            # Update active alerts by area
+            for area in a["areas"]:
+                forecast_areas_for_history.append(area)
+                # We always take the LATEST message's timing for an area
+                active_alerts_by_area[area] = {
                     "text": display_text,
-                    "target_time": target_time.isoformat(),
+                    "target_time": a_target_time,
                     "received_at": msg_dt.isoformat(),
-                    "has_data": True
+                    "clock_time": a.get("clock_time"),
+                    "expected_time_text": a.get("expected_time_text"),
+                    "source_channel": channel_name,
+                    "areas": [area]
                 }
-            
-            # Save to history
-            h_exists = any(
-                h.get("target_time") == target_time.isoformat() and h.get("text") == text
-                for h in alert_history
-            )
-            if not h_exists:
+                
+                # Update today_forecasts (just basic stats tracking)
+                fc_exists = any(
+                    f.get("text") == text and f.get("areas") == [area]
+                    for f in today_forecasts
+                )
+                if not fc_exists:
+                    today_forecasts.append({
+                        "text": text,
+                        "target_time": a_target_time,
+                        "received_at": msg_dt.isoformat(),
+                        "expected_time_text": a.get("expected_time_text"),
+                        "expected_seconds": a.get("expected_seconds"),
+                        "areas": [area],
+                        "source_channel": channel_name,
+                    })
+
+        # Deduplicate history areas
+        forecast_areas_for_history = list(dict.fromkeys(forecast_areas_for_history))
+        
+        if forecast_areas_for_history or text:
+            merged_in_history = False
+            for h in alert_history[:10]:
+                h_dt = datetime.fromisoformat(h["received_at"])
+                time_diff_sec = abs((msg_dt - h_dt).total_seconds())
+
+                if time_diff_sec <= 5 * 60:
+                    h_areas_set = set(h.get("areas", []))
+                    f_areas_set = set(forecast_areas_for_history)
+                    
+                    if not f_areas_set and h_areas_set:
+                        h["received_at"] = max(h_dt, msg_dt).isoformat()
+                        merged_in_history = True
+                        break
+                    elif f_areas_set and not h_areas_set:
+                        h["areas"] = list(f_areas_set)
+                        h["received_at"] = max(h_dt, msg_dt).isoformat()
+                        merged_in_history = True
+                        break
+                    elif f_areas_set == h_areas_set and f_areas_set:
+                        h["received_at"] = max(h_dt, msg_dt).isoformat()
+                        merged_in_history = True
+                        break
+
+            if not merged_in_history and forecast_areas_for_history:
                 alert_history.insert(0, {
                     "text": display_text,
-                    "target_time": target_time.isoformat(),
-                    "received_at": msg_dt.isoformat()
+                    "received_at": msg_dt.isoformat(),
+                    "areas": forecast_areas_for_history,
+                    "source_channel": channel_name,
+                    "expected_time_text": alerts[0].get("expected_time_text") if alerts else None,
+                    "target_time": alerts[0].get("target_time") if alerts else None
                 })
                 if len(alert_history) > MAX_HISTORY:
                     alert_history.pop()
-            
-            # Broadcast to clients (only for NEW messages, not init)
-            if not is_init:
-                await manager.broadcast({
-                    "msg_type": "telegram_timing",
-                    **latest_event
-                })
 
-
-async def process_pikud_haoref_messages(messages, is_init=False):
-    """Process messages from PikudHaOref_all channel (official alerts).
+    # Clean up active alerts and build latest_event
+    cleanup_dt = datetime.now(local_tz)
+    to_delete = []
+    current_alerts_array = []
     
-    Handles ALL message types:
-    - 🚨ירי רקטות וטילים  → category 1 (missiles)
-    - ✈חדירת כלי טיס עוין → category 2 (hostile aircraft)  
-    - 🚨מבזק + בדקות הקרובות → category 14 (early warning)
-    - 🚨עדכון + האירוע הסתיים → category 13 (event ended)
-    
-    Populates today_real_alerts for stats and triggers live alerts.
-    """
-    global telegram_pikud_active_alerts, today_messages, today_real_alerts
-    
-    now = datetime.now(local_tz)
-    cutoff = now - timedelta(hours=12)
-    
-    for msg in messages:
-        msg_id = msg["id"]
-        msg_dt = msg["msg_dt"]
-        text = msg["text"]
-        
-        if msg_dt < cutoff:
-            continue
-        
-        is_new = msg_id and msg_id not in telegram_last_seen_ids["PikudHaOref_all"]
-        if msg_id:
-            telegram_last_seen_ids["PikudHaOref_all"].add(msg_id)
-        
-        if not is_new and not is_init:
-            continue
-        
-        # --- Determine alert category from message text ---
-        alert_cat = None
-        title = ""
-        
-        if "ירי רקטות וטילים" in text:
-            if "האירוע הסתיים" in text:
-                alert_cat = 13
-                title = "ירי רקטות וטילים -  האירוע הסתיים"
-            else:
-                alert_cat = 1
-                title = "ירי רקטות וטילים"
-        elif "חדירת כלי טיס עוין" in text:
-            if "האירוע הסתיים" in text:
-                alert_cat = 13
-                title = "חדירת כלי טיס עוין - האירוע הסתיים"
-            else:
-                alert_cat = 2
-                title = "חדירת כלי טיס עוין"
-        elif "בדקות הקרובות צפויות להתקבל התרעות באזורך" in text:
-            alert_cat = 14
-            title = "בדקות הקרובות צפויות להתקבל התרעות באזורך"
-        elif "חדירת מחבלים" in text:
-            if "האירוע הסתיים" in text:
-                alert_cat = 13
-                title = "חדירת מחבלים - האירוע הסתיים"
-            else:
-                alert_cat = 3
-                title = "חדירת מחבלים"
+    for area, info in active_alerts_by_area.items():
+        is_relevant = False
+        target_time_str = info.get("target_time")
+        if target_time_str:
+            t_dt = datetime.fromisoformat(target_time_str)
+            if (cleanup_dt - t_dt).total_seconds() <= 15 * 60:
+                is_relevant = True
         else:
-            # Unknown message type — skip
-            continue
-        
-        # --- Extract the actual alert time from message text ---
-        # Format in messages: (D/M/YYYY) H:MM  e.g. (5/3/2026) 2:28
-        alert_time_match = re.search(r'\((\d{1,2})/(\d{1,2})/(\d{4})\)\s*(\d{1,2}):(\d{2})', text)
-        if alert_time_match:
-            day = int(alert_time_match.group(1))
-            month = int(alert_time_match.group(2))
-            year = int(alert_time_match.group(3))
-            hour = int(alert_time_match.group(4))
-            minute = int(alert_time_match.group(5))
-            try:
-                alert_dt = datetime(year, month, day, hour, minute, 0, tzinfo=local_tz)
-            except Exception:
-                alert_dt = msg_dt
+            r_dt = datetime.fromisoformat(info["received_at"])
+            if (cleanup_dt - r_dt).total_seconds() <= 15 * 60:
+                is_relevant = True
+                
+        if is_relevant:
+            current_alerts_array.append(info)
         else:
-            alert_dt = msg_dt
-        
-        # --- Extract cities from message ---
-        lines = text.split("\n")
-        cities = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            # Skip header/instruction lines
-            if any(skip in line for skip in [
-                "היכנסו", "ירי רקטות", "חדירת כלי", "חדירת מחבלים",
-                "מבזק", "אזור ", "בדקות הקרובות", "לשפר את", "לשהות בו",
-                "בהמשך לדיווח", "עדכון", "האירוע הסתיים", "על תושבי",
-                "במקרה של", "יש להיכנס", "באזורים הבאים"
-            ]):
-                continue
-            # This line likely contains city names
-            for city in line.split(","):
-                city = city.strip()
-                if city and len(city) > 1:
-                    city = re.sub(r'\(.*?\)', '', city).strip()
-                    if city:
-                        cities.append(city)
-        
-        # --- Add each city to today_real_alerts for stats ---
-        alert_date_str = alert_dt.strftime("%Y-%m-%d %H:%M:%S")
-        cat_info = ALERT_CATEGORIES.get(alert_cat, ALERT_CATEGORIES.get(1, {}))
-        
-        for city in cities:
-            exists = any(
-                a["alertDate"] == alert_date_str and a["city"] == city
-                for a in today_real_alerts
-            )
-            if not exists:
-                today_real_alerts.append({
-                    "alertDate": alert_date_str,
-                    "title": title,
-                    "city": city,
-                    "category": alert_cat,
-                    "category_info": cat_info,
-                })
-        
-        # --- Add to today's messages for display ---
-        display_id = f"pikud_{msg_id}"
-        exists = any(m.get("id") == display_id for m in today_messages)
-        if not exists:
-            today_messages.insert(0, {
-                "text": f"[פיקוד העורף] {text}",
-                "date": msg_dt.isoformat(),
-                "id": display_id,
-            })
-        
-        # --- Live alert broadcasting (only new real-time alerts, not init) ---
-        if is_new and not is_init and alert_cat in (1, 2, 3, 14):
-            alert_key = f"tg_{alert_cat}_{msg_id}"
+            to_delete.append(area)
             
-            alert_obj = {
-                "id": alert_key,
-                "cities": cities[:50],
-                "title": cat_info.get("label", title),
-                "desc": "",
-                "category": alert_cat,
-                "category_info": cat_info,
-                "timestamp": alert_dt.isoformat(),
-                "source": "telegram_pikud"
-            }
-            
-            add_persistent_alert(alert_obj)
-            
-            await manager.broadcast({
-                "msg_type": "oref_alert",
-                "alert": alert_obj,
-                "is_new": True
-            })
-            
-            # --- Check if this alert matches the current forecast (early/late detection) ---
-            if alert_cat == 1 and latest_event.get("has_data") and latest_event.get("target_time"):
-                try:
-                    forecast_target = datetime.fromisoformat(latest_event["target_time"])
-                    diff_seconds = (alert_dt - forecast_target).total_seconds()
-                    diff_minutes = diff_seconds / 60
-                    # Only match if within 10 minutes of forecast
-                    if abs(diff_minutes) < 10:
-                        await manager.broadcast({
-                            "msg_type": "forecast_matched",
-                            "diff_seconds": diff_seconds,
-                            "diff_minutes": round(diff_minutes, 1),
-                            "forecast_time": latest_event["target_time"],
-                            "alert_time": alert_dt.isoformat(),
-                            "early": diff_seconds < 0,
-                            "late": diff_seconds > 0,
-                        })
-                except Exception:
-                    pass
+    for area in to_delete:
+        del active_alerts_by_area[area]
         
-        # --- On init, add recent alerts (< 30 min) to persistent system for new clients ---
-        if is_init and alert_cat in (1, 2, 3, 14):
-            age_seconds = (now - alert_dt).total_seconds()
-            if 0 <= age_seconds <= ALERT_PERSIST_SECONDS:
-                alert_key = f"tg_{alert_cat}_{msg_id}"
-                alert_obj = {
-                    "id": alert_key,
-                    "cities": cities[:50],
-                    "title": cat_info.get("label", title),
-                    "desc": "",
-                    "category": alert_cat,
-                    "category_info": cat_info,
-                    "timestamp": alert_dt.isoformat(),
-                    "source": "telegram_pikud"
-                }
-                add_persistent_alert(alert_obj)
-        
-        # --- Handle "event ended" (category 13) — broadcast clear ---
-        if is_new and not is_init and alert_cat == 13:
-            await manager.broadcast({
-                "msg_type": "oref_clear",
-                "alerts": []
-            })
-
+    if current_alerts_array:
+        # Group by identical timings and texts to avoid duplicate cards 
+        grouped_alerts = []
+        for alert in current_alerts_array:
+            found_group = False
+            for group in grouped_alerts:
+                if group.get("target_time") == alert.get("target_time") and group.get("expected_time_text") == alert.get("expected_time_text"):
+                    group["areas"].extend(alert["areas"])
+                    group["areas"] = list(dict.fromkeys(group["areas"]))
+                    found_group = True
+                    break
+            if not found_group:
+                new_group = alert.copy()
+                new_group["areas"] = list(alert["areas"])
+                grouped_alerts.append(new_group)
+                
+        latest_event = {
+            "text": "מערכת התרעות מאוחדת פעילה",
+            "target_time": grouped_alerts[0].get("target_time") if grouped_alerts else None,
+            "received_at": max([a["received_at"] for a in current_alerts_array]),
+            "areas": [], # Handled by subAlertsContainer
+            "alerts": grouped_alerts,
+            "has_data": True
+        }
+    else:
+        latest_event = {
+            "text": "ממתין לעדכונים...",
+            "target_time": None,
+            "has_data": False
+        }
 
 async def telegram_polling_loop():
     """Background task: poll Telegram channels via web scraping."""
-    print("📱 Starting Telegram channel scraping (no auth needed)...")
+    print("Ã°Å¸â€œÂ± Starting Telegram channel scraping (no auth needed)...")
     
-    # Initial fetch for all channels — load up to 250 pages (~5000 messages) or 12h of history
+    # Initial fetch for all channels Ã¢â‚¬â€ load up to 250 pages (~5000 messages) or 12h of history
     INIT_PAGES = 250
     cutoff_12h = datetime.now(local_tz) - timedelta(hours=12)
     for ch_name, ch_config in TELEGRAM_CHANNELS.items():
         try:
             messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES, cutoff_dt=cutoff_12h)
             if messages:
-                if ch_config["type"] == "forecast":
-                    await process_shigurimsh_messages(messages, is_init=True)
-                elif ch_config["type"] == "official_alert":
-                    await process_pikud_haoref_messages(messages, is_init=True)
+                await process_forecast_messages(messages, ch_name, is_init=True)
                 telegram_initialized[ch_name] = True
-                print(f"✅ {ch_config['label']}: loaded {len(messages)} messages")
+                print(f"Ã¢Å“â€¦ {ch_config['label']}: loaded {len(messages)} messages")
         except Exception as e:
-            print(f"⚠️ Error initializing {ch_name}: {e}")
+            print(f"Ã¢Å¡Â Ã¯Â¸Â Error initializing {ch_name}: {e}")
     
-    # Continuous polling — only latest page
+    # Continuous polling Ã¢â‚¬â€ only latest page
     while True:
         await asyncio.sleep(TELEGRAM_POLL_INTERVAL)
         for ch_name, ch_config in TELEGRAM_CHANNELS.items():
             try:
                 messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=1)
                 if messages:
-                    if ch_config["type"] == "forecast":
-                        await process_shigurimsh_messages(messages, is_init=False)
-                    elif ch_config["type"] == "official_alert":
-                        await process_pikud_haoref_messages(messages, is_init=False)
+                    await process_forecast_messages(messages, ch_name, is_init=False)
             except Exception as e:
-                print(f"⚠️ Error polling {ch_name}: {e}")
-
-# ==========================
-# Persistent Alert System (30-minute active window)
-# ==========================
-ALERT_PERSIST_SECONDS = 30 * 60  # 30 minutes
-persistent_alerts = {}  # alert_key -> {alert_obj, first_seen, last_seen}
-telegram_pikud_active_alerts = []  # Track alerts from Pikud HaOref Telegram
-
-def add_persistent_alert(alert_obj):
-    """Add or refresh a persistent alert. Alerts stay active for 30 minutes."""
-    key = alert_obj["id"]
-    now = datetime.now(local_tz)
-    
-    if key in persistent_alerts:
-        persistent_alerts[key]["last_seen"] = now
-        persistent_alerts[key]["alert"] = alert_obj
-    else:
-        persistent_alerts[key] = {
-            "alert": alert_obj,
-            "first_seen": now,
-            "last_seen": now,
-        }
-
-def get_all_active_alerts():
-    """Get all alerts that are still within their 30-minute persistence window."""
-    now = datetime.now(local_tz)
-    active = []
-    expired_keys = []
-    
-    for key, entry in persistent_alerts.items():
-        age = (now - entry["first_seen"]).total_seconds()
-        if age <= ALERT_PERSIST_SECONDS:
-            active.append(entry["alert"])
-        else:
-            expired_keys.append(key)
-    
-    # Clean up expired
-    for key in expired_keys:
-        del persistent_alerts[key]
-    
-    return active
-
-def has_active_missile_alert():
-    """Check if there's any active missile alert (category 1) - used to keep alerts until next missile event."""
-    for entry in persistent_alerts.values():
-        if entry["alert"].get("category") == 1:
-            age = (datetime.now(local_tz) - entry["first_seen"]).total_seconds()
-            if age <= ALERT_PERSIST_SECONDS:
-                return True
-    return False
-
-# ==========================
-# Pikud HaOref Polling Logic
-# ==========================
-oref_error_logged = False  # Log Oref error only once
-oref_first_success = False  # Log first successful fetch
-ACTIVE_ALERT_WINDOW_SECONDS = 120  # Alerts within last 2 minutes are considered "active" from Oref API
-
-async def fetch_oref_data():
-    """Fetch alert data from Oref history API (works internationally, unlike Alerts.json).
-    
-    Uses alerts-history.oref.org.il with mode=2 (last month history) which is NOT geo-blocked.
-    Detects "active" alerts as those within the last 2 minutes from the history feed.
-    Also accumulates history data for stats.
-    """
-    global oref_active_alerts, oref_last_alert_ids, oref_recent_history, today_real_alerts, oref_error_logged, oref_first_success
-    
-    now = datetime.now(local_tz)
-    
-    async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as http_client:
-        try:
-            resp = await http_client.get(
-                OREF_HISTORY_URL,
-                headers=OREF_HISTORY_HEADERS
-            )
-            body = resp.text.strip().replace('\ufeff', '').replace('\x00', '')
-            
-            if not body:
-                if not oref_error_logged:
-                    print(f"⚠️ Oref History API returned empty body (status {resp.status_code})")
-                    oref_error_logged = True
-                return
-            
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError as je:
-                if not oref_error_logged:
-                    print(f"⚠️ Oref History API JSON parse error: {je}")
-                    print(f"   Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type', 'N/A')}")
-                    print(f"   Body preview (first 200 chars): {body[:200]}")
-                    oref_error_logged = True
-                return
-            
-            if not isinstance(data, list):
-                return
-            
-            if not oref_first_success:
-                oref_first_success = True
-                print(f"✅ Oref History API working! Got {len(data)} alert records")
-            
-            history_items = []
-            active_cities = {}  # category -> {title, cat_info, cities: []}
-            
-            for item in data:
-                city = (item.get("data") or "").strip()
-                if not city or "בדיקה" in city:
-                    continue
-                
-                # alertDate is ISO like "2025-03-04T22:43:00"
-                # time is exact like "22:43:06"
-                alert_date_iso = item.get("alertDate", "")
-                exact_time = item.get("time", "")
-                title = item.get("category_desc", "")
-                cat = int(item.get("category", 1))
-                cat_info = ALERT_CATEGORIES.get(cat, ALERT_CATEGORIES.get(1, {}))
-                
-                # Normalize alertDate to "YYYY-MM-DD HH:MM:SS" format
-                if exact_time and alert_date_iso:
-                    date_part = alert_date_iso[:10]
-                    alert_date_normalized = f"{date_part} {exact_time}"
-                elif alert_date_iso:
-                    alert_date_normalized = alert_date_iso.replace("T", " ")
-                else:
-                    continue
-                
-                alert_item = {
-                    "alertDate": alert_date_normalized,
-                    "title": title,
-                    "city": city,
-                    "category": cat,
-                    "category_info": cat_info,
-                }
-                history_items.append(alert_item)
-                
-                # Parse timestamp to check recency
-                try:
-                    alert_dt = datetime.strptime(alert_date_normalized, "%Y-%m-%d %H:%M:%S")
-                    alert_dt = alert_dt.replace(tzinfo=local_tz)
-                except Exception:
-                    continue
-                
-                # --- Active alert detection: alerts within last 2 minutes ---
-                age_seconds = (now - alert_dt).total_seconds()
-                if 0 <= age_seconds <= ACTIVE_ALERT_WINDOW_SECONDS:
-                    if cat not in active_cities:
-                        active_cities[cat] = {"title": title, "cat_info": cat_info, "cities": []}
-                    if city not in active_cities[cat]["cities"]:
-                        active_cities[cat]["cities"].append(city)
-            
-            oref_recent_history = history_items
-            
-            # --- Process active alerts (from Oref API) and add to persistent system ---
-            if active_cities:
-                for cat, info in active_cities.items():
-                    alert_key = f"oref_{cat}_{','.join(sorted(info['cities']))}"
-                    
-                    alert_obj = {
-                        "id": alert_key,
-                        "cities": info["cities"],
-                        "title": info["title"],
-                        "desc": "",
-                        "category": cat,
-                        "category_info": info["cat_info"],
-                        "timestamp": now.isoformat(),
-                        "source": "oref"
-                    }
-                    
-                    # Add to 30-minute persistent alerts
-                    add_persistent_alert(alert_obj)
-                    
-                    if alert_key not in oref_last_alert_ids:
-                        oref_last_alert_ids.add(alert_key)
-                        if len(oref_last_alert_ids) > 500:
-                            oref_last_alert_ids = set(list(oref_last_alert_ids)[-200:])
-                        
-                        await manager.broadcast({
-                            "msg_type": "oref_alert",
-                            "alert": alert_obj,
-                            "is_new": True
-                        })
-            
-            # --- Check persistent alerts (30-min window) ---
-            all_active = get_all_active_alerts()
-            prev_had_alerts = len(oref_active_alerts) > 0
-            oref_active_alerts = all_active
-            
-            # If all alerts have expired (were active, now empty), send clear
-            if prev_had_alerts and not all_active:
-                await manager.broadcast({
-                    "msg_type": "oref_clear",
-                    "alerts": []
-                })
-            
-            # Reset error flag on success
-            if oref_error_logged:
-                oref_error_logged = False
-                print("✅ Oref History API is now responding successfully")
-        
-        except Exception as e:
-            if not oref_error_logged:
-                print(f"⚠️ Oref History API error: {e}")
-                oref_error_logged = True
-
-
-async def oref_polling_loop():
-    """Background task: poll Pikud HaOref every N seconds."""
-    print("🛡️ מתחיל לאזין לפיקוד העורף (via history API)...")
-    while True:
-        await fetch_oref_data()
-        await asyncio.sleep(OREF_POLL_INTERVAL)
-
-@app.on_event("startup")
-async def startup_event():
-    # Start Telegram channel scraping (no auth needed)
-    asyncio.create_task(telegram_polling_loop())
-    
-    # Start Pikud HaOref API polling in background
-    asyncio.create_task(oref_polling_loop())
-
-@app.get("/")
-async def serve_frontend():
-    """Serve the main HTML page."""
-    html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html")
-    return FileResponse(html_path)
+                print(f"Ã¢Å¡Â Ã¯Â¸Â Error polling {ch_name}: {e}")
 
 @app.get("/api/latest")
-async def get_latest():
-    """REST endpoint to get the latest alert data."""
+async def get_latest_event():
     return latest_event
 
 @app.get("/api/history")
-async def get_history():
-    """REST endpoint to get alert history."""
+async def get_alert_history():
     return alert_history
 
-@app.get("/api/oref-alerts")
-async def get_oref_alerts():
-    """REST endpoint to get current Pikud HaOref active alerts."""
-    return oref_active_alerts
+@app.get("/")
+async def serve_index():
+    return FileResponse("index.html")
 
-@app.get("/api/oref-history")
-async def get_oref_history():
-    """REST endpoint to get recent Pikud HaOref alert history."""
-    return oref_recent_history
-
-@app.get("/api/city-coords")
-async def get_city_coords():
-    """REST endpoint to get city coordinate mappings for the map."""
-    return city_coords
-
-@app.get("/api/stats")
-async def get_stats():
-    """REST endpoint to get today's forecast vs real alert statistics."""
-    return compute_stats()
-
-@app.get("/api/today-messages")
-async def get_today_messages():
-    """REST endpoint to get all today's channel messages."""
-    return today_messages
-
-@app.get("/api/debug")
-async def get_debug():
-    """Debug endpoint to inspect parsed data."""
-    return {
-        "today_forecasts_count": len(today_forecasts),
-        "today_forecasts": today_forecasts[:20],
-        "today_real_alerts_count": len(today_real_alerts),
-        "today_real_alerts_sample": today_real_alerts[:30],
-        "today_real_alerts_cat1": [a for a in today_real_alerts if a.get("category") == 1][:20],
-        "today_messages_count": len(today_messages),
-        "today_messages_sample": today_messages[:10],
-        "telegram_initialized": telegram_initialized,
-        "stats": compute_stats(),
-    }
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    # Send initial state — includes ALL active alerts (Oref API + Telegram Pikud)
-    all_active = get_all_active_alerts()
-    await websocket.send_json({
-        "msg_type": "init",
-        "telegram": latest_event,
-        "oref_alerts": all_active,
-        "oref_history": oref_recent_history,
-        "city_coords": city_coords,
-    })
+async def fetch_israel_cities():
+    """Fetch all Israeli settlements from data.gov.il dynamically on startup."""
+    print("Ã°Å¸Å’Â Fetching official Israeli cities from data.gov.il...")
     try:
-        while True:
-            # Keep connection alive
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        async with httpx.AsyncClient(timeout=15) as client:
+            url = "https://data.gov.il/api/3/action/datastore_search?resource_id=5c78e9fa-c2e2-4771-93ff-7f400a12f7ba&limit=2000"
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                records = data.get("result", {}).get("records", [])
+                
+                new_cities = 0
+                for rec in records:
+                    city_name = rec.get("שם_ישוב", "").strip()
+                    clean_name = clean_hebrew_city(city_name)
+                    if clean_name and len(clean_name) >= 2 and clean_name not in KNOWN_AREAS:
+                        KNOWN_AREAS.append(clean_name)
+                        new_cities += 1
+                        
+                # Sort descending by length so "תל אביב" matches before "תל"
+                KNOWN_AREAS.sort(key=len, reverse=True)
+                print(f"Ã¢Å“â€¦ Successfully loaded {new_cities} new cities/settlements from online DB.")
+    except Exception as e:
+        print(f"Ã¢Å¡Â Ã¯Â¸Â Error fetching cities: {e}")
 
-# Mount static files AFTER all routes so it doesn't override them
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+import json
+from datetime import datetime
+import asyncio
+import os
+
+async def debug_load_messages():
+    try:
+        if os.path.exists('real_messages.json'):
+            print("🐞 DEBUG: Loading messages from real_messages.json")
+            with open('real_messages.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Sort chronologically so they replay correctly
+            data.sort(key=lambda x: x["date"])
+            
+            # Group by channel
+            by_channel = {}
+            for msg in data:
+                ch = msg.get("channel", "shigurimsh")
+                if ch not in by_channel:
+                    by_channel[ch] = []
+                # Make sure msg_dt exists
+                msg["msg_dt"] = datetime.fromisoformat(msg["date"])
+                by_channel[ch].append(msg)
+                
+            # Override 12-hour cutoff by using the max date of messages as 'now'
+            # But the code inside process_forecast_messages uses datetime.now().
+            # To fix this without modifying process_forecast_messages heavily, 
+            # we can temporarily mock datetime.now() for this module!
+            
+            import server
+            original_now = server.datetime.now
+            if data:
+                latest_msg_dt = data[-1]["msg_dt"]
+                # Mock it to 5 minutes after the last message
+                mock_now = latest_msg_dt + server.timedelta(minutes=5)
+                server.datetime.now = lambda tz=None: mock_now
+                
+                print(f"🐞 DEBUG: Faked 'now' to {mock_now}")
+            
+                for ch, msgs in by_channel.items():
+                    print(f"🐞 Processing {len(msgs)} debug messages for {ch}")
+                    await server.process_forecast_messages(msgs, ch, is_init=True)
+                    
+                # Restore original
+                server.datetime.now = original_now
+                print("🐞 DEBUG: Finished loading JSON data!")
+    except Exception as e:
+        print(f"DEBUG LOAD FAILED: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    # Load cities dynamically
+    await fetch_israel_cities()
+    
+    # DEBUG: Load test messages
+    await debug_load_messages()
+    
+    # Start Telegram channel scraping (no auth needed)
+    asyncio.create_task(telegram_polling_loop())
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=PORT)
+
+import json
+from datetime import datetime
+import asyncio
+import os
+
+

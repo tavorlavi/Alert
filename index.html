@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>מערכת התרעות בזמן אמת</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Heebo:wght@400;700;900&family=Rubik:wght@400;500;700&display=swap');
+        
+        :root {
+            --bg-color: #050508;
+            --surface-color: rgba(12, 16, 28, 0.85);
+            --text-color: #cbd5e1;
+            --cyan: #00f3ff;
+            --magenta: #ff003c;
+            --green: #00ff88;
+            --glass: rgba(0, 243, 255, 0.05);
+            --border-glow: 0 0 10px rgba(0, 243, 255, 0.5);
+            --red-glow: 0 0 15px rgba(255, 0, 60, 0.8);
+            --accent-bg: rgba(255, 0, 60, 0.08);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            background-image: 
+                linear-gradient(rgba(0, 243, 255, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 243, 255, 0.04) 1px, transparent 1px);
+            background-size: 40px 40px;
+            color: var(--text-color);
+            font-family: 'Rubik', sans-serif;
+            text-align: center;
+            overflow-x: hidden;
+        }
+
+        header {
+            background: linear-gradient(90deg, transparent, rgba(0, 243, 255, 0.15), transparent);
+            border-bottom: 2px solid var(--cyan);
+            padding: 1.2rem;
+            font-size: 1.8rem;
+            font-family: 'Heebo', sans-serif;
+            font-weight: 900;
+            letter-spacing: 2px;
+            text-shadow: 0 0 12px var(--cyan);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+            text-transform: uppercase;
+        }
+        
+        .header-glow { color: var(--cyan); }
+
+        .container {
+            padding: 2rem 1rem;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+        
+        .tab-btn {
+            background: var(--surface-color);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            padding: 0.6rem 2rem;
+            font-family: 'Heebo', sans-serif;
+            font-weight: 700;
+            font-size: 1.2rem;
+            border-radius: 6px;
+            cursor: pointer;
+            text-shadow: 0 0 8px rgba(0, 243, 255, 0.6);
+            box-shadow: 0 0 10px rgba(0, 243, 255, 0.15);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+        }
+        
+        .tab-btn:hover {
+            background: rgba(0, 243, 255, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .tab-btn.active {
+            background: var(--cyan);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.6);
+            text-shadow: none;
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.5s ease-out; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Status Card */
+        .status-card {
+            background-color: var(--surface-color);
+            border-radius: 8px;
+            padding: 2rem 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(0, 243, 255, 0.3);
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        .status-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 50%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 243, 255, 0.1), transparent);
+            transform: skewX(-20deg);
+            animation: scanline 5s infinite;
+            pointer-events: none;
+        }
+
+        @keyframes scanline {
+            0% { left: -100%; }
+            50% { left: 200%; }
+            100% { left: 200%; }
+        }
+
+        .status-card.alert-active {
+            border-color: var(--magenta);
+            animation: red-alert-pulse 1.5s infinite alternate;
+        }
+        
+        .status-card.alert-active::before {
+            background: linear-gradient(90deg, transparent, rgba(255, 0, 60, 0.2), transparent);
+            animation: scanline 2s infinite;
+        }
+
+        @keyframes red-alert-pulse {
+            from { box-shadow: 0 0 10px rgba(255, 0, 60, 0.2), inset 0 0 10px rgba(255, 0, 60, 0.1); }
+            to { box-shadow: 0 0 30px rgba(255, 0, 60, 0.6), inset 0 0 20px rgba(255, 0, 60, 0.2); }
+        }
+
+        .status-icon {
+            font-size: 3.5rem;
+            margin-bottom: 0.5rem;
+            filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.5));
+        }
+        
+        .alert-active .status-icon {
+            filter: drop-shadow(0 0 15px var(--magenta));
+            animation: shake 0.5s infinite cubic-bezier(.36,.07,.19,.97) both;
+        }
+
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+
+        .status-title {
+            font-size: 1.8rem;
+            font-weight: 800;
+            margin: 0 0 1rem 0;
+            letter-spacing: 1px;
+        }
+
+        .main-timer {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 4.5rem;
+            color: var(--magenta);
+            text-shadow: 0 0 15px var(--magenta);
+            margin: 1rem 0;
+            line-height: 1;
+        }
+
+        .main-timer.expired {
+            color: var(--green);
+            text-shadow: 0 0 15px var(--green);
+        }
+
+        .areas-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .area-badge {
+            background: rgba(255, 0, 60, 0.1);
+            color: #fff;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            border: 1px solid var(--magenta);
+            box-shadow: 0 0 8px rgba(255, 0, 60, 0.4);
+            letter-spacing: 0.5px;
+        }
+
+        .raw-text {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 1.1rem;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 1rem;
+            border-radius: 4px;
+            border-left: 3px solid var(--cyan);
+            color: var(--text-color);
+            white-space: pre-wrap;
+            text-align: right;
+            margin-top: 1.5rem;
+        }
+
+        .alert-active .raw-text {
+            border-left-color: var(--magenta);
+            color: #ffcccc;
+        }
+
+        .sub-alerts {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .sub-alert-card {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            border-right: 4px solid var(--magenta);
+            padding: 1rem;
+            text-align: center;
+            position: relative;
+        }
+
+        .sub-alert-timer {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 3.5rem;
+            color: var(--magenta);
+            text-shadow: 0 0 10px rgba(255, 0, 60, 0.5);
+            margin-top: 0.5rem;
+        }
+        
+        .sub-alert-timer.expired {
+            color: var(--green);
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+
+        /* History Tab */
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            text-align: right;
+            margin-bottom: 2rem;
+            position: relative;
+            padding-right: 2rem;
+        }
+
+        .history-list::before {
+            content: '';
+            position: absolute;
+            top: 0; bottom: 0; right: 12px;
+            width: 3px;
+            background: linear-gradient(to bottom, var(--cyan), transparent);
+            box-shadow: 0 0 10px var(--cyan);
+            border-radius: 3px;
+        }
+
+        .history-item {
+            background: linear-gradient(135deg, var(--surface-color), rgba(20, 25, 40, 0.9));
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            padding: 1.5rem;
+            border-radius: 12px;
+            position: relative;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(8px);
+        }
+
+        .history-item::before {
+            content: '';
+            position: absolute;
+            top: 2rem; right: -2.3rem;
+            width: 16px; height: 16px;
+            background: var(--bg-color);
+            border: 3px solid var(--cyan);
+            border-radius: 50%;
+            box-shadow: 0 0 15px var(--cyan), inset 0 0 5px var(--cyan);
+            z-index: 2;
+            transition: all 0.3s ease;
+        }
+
+        .history-item:hover {
+            border-color: var(--cyan);
+            transform: translateX(-8px) scale(1.02);
+            box-shadow: 0 12px 30px rgba(0, 243, 255, 0.15);
+        }
+
+        .history-item:hover::before {
+            background: var(--cyan);
+            box-shadow: 0 0 20px var(--cyan);
+            transform: scale(1.2);
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px dashed rgba(0, 243, 255, 0.2);
+            padding-bottom: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .history-time-badge {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 1.3rem;
+            color: var(--magenta);
+            font-weight: 800;
+            text-shadow: 0 0 12px rgba(255, 0, 60, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--accent-bg);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            border-right: 3px solid var(--magenta);
+        }
+        
+        .history-date {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 0.95rem;
+            color: var(--cyan);
+            opacity: 0.8;
+            letter-spacing: 1px;
+        }
+
+        .history-areas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            margin: 0;
+            padding-top: 0.5rem;
+        }
+        
+        .hist-area-pill {
+            background: rgba(255, 0, 60, 0.08);
+            color: #ffcccc;
+            padding: 0.5rem 1rem;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            font-family: 'Heebo', sans-serif;
+            font-weight: 700;
+            border: 1px solid rgba(255, 0, 60, 0.4);
+            box-shadow: 0 2px 8px rgba(255, 0, 60, 0.15);
+            transition: all 0.2s;
+        }
+        
+        .hist-area-pill:hover {
+            background: rgba(255, 0, 60, 0.2);
+            box-shadow: 0 0 12px rgba(255, 0, 60, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .hidden { display: none !important; }
+        
+        #connection-status {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 0.9rem;
+            color: var(--cyan);
+            margin-top: 2rem;
+            text-shadow: 0 0 5px rgba(0, 243, 255, 0.5);
+        }
+        
+        .connection-error {
+            color: var(--magenta) !important;
+            text-shadow: 0 0 5px rgba(255, 0, 60, 0.5) !important;
+        }
+        
+        .sys-data {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 0.8rem;
+            color: #445;
+            position: fixed;
+            bottom: 5px; right: 5px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span class="header-glow">//</span> מערכת התרעות בזמן אמת <span class="header-glow">_</span>
+    </header>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('rt-tab')">👁️ זמן אמת</button>
+            <button class="tab-btn" onclick="switchTab('history-tab')">📊 היסטוריה וסטטיסטיקות</button>
+        </div>
+
+        <div id="rt-tab" class="tab-content active">
+            <div id="status-container" class="status-card">
+                <div id="status-icon" class="status-icon">🛡️</div>
+                <h2 id="status-title" class="status-title">סריקת מערכות תקינה</h2>
+                <div id="unified-timer" class="main-timer hidden">00:00</div>
+                
+                <div id="areas-container" class="areas-list hidden"></div>
+                
+                <div id="raw-text" class="raw-text hidden"></div>
+            </div>
+
+            <div id="sub-alerts-container" class="sub-alerts hidden"></div>
+        </div>
+
+        <div id="history-tab" class="tab-content">
+            <div id="history-stats" style="display:flex; justify-content:space-around; background:rgba(0,243,255,0.05); border:1px solid rgba(0,243,255,0.2); border-radius:4px; padding:1rem; margin-bottom:1.5rem;">
+                <!-- Auto Updated Stats -->
+                <div style="text-align:center;">
+                    <div style="font-size:2rem; color:var(--magenta); font-family:'Share Tech Mono', monospace; font-weight:bold; text-shadow:0 0 10px rgba(255,0,60,0.5);" id="stat-total">0</div>
+                    <div style="font-size:0.9rem; color:var(--cyan);">סה"כ התרעות</div>
+                </div>
+            </div>
+            
+            <div id="history-container" class="history-list">
+                טוען נתונים...
+            </div>
+        </div>
+        
+        <div id="connection-status">SYSTEM LINK ESTABLISHED</div>
+    </div>
+    
+    <div class="sys-data">V.2.0.4 ONLINE | RADAR: SECURE</div>
+
+    <script>
+        const POLL_INTERVAL = 3000;
+        let currentEventStr = null;
+        let timers = [];
+
+        function clearTimers() {
+            timers.forEach(t => clearInterval(t.interval));
+            timers = [];
+        }
+
+        function formatTimeDiff(diffSeconds) {
+            if (diffSeconds < 0) return "אזעקה!";
+            const mins = Math.floor(diffSeconds / 60);
+            const secs = Math.floor(diffSeconds % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function formatDateTime(isoStr) {
+            const d = new Date(isoStr);
+            return d.toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit', second:'2-digit'}) + 
+                   " | " + d.toLocaleDateString('he-IL');
+        }
+
+        function startTimer(elementId, targetTimeStr) {
+            const el = document.getElementById(elementId);
+            if (!el || !targetTimeStr) return;
+            const targetDate = new Date(targetTimeStr);
+
+            const updateTimer = () => {
+                const now = new Date();
+                const diffSeconds = (targetDate - now) / 1000;
+                
+                el.innerText = formatTimeDiff(diffSeconds);
+                if (diffSeconds <= 0) {
+                    el.classList.add("expired");
+                } else {
+                    el.classList.remove("expired");
+                }
+            };
+            updateTimer();
+            const interval = setInterval(updateTimer, 1000);
+            timers.push({ elementId, interval });
+        }
+
+        async function fetchLatest() {
+            try {
+                const res = await fetch('/api/latest');
+                if (!res.ok) throw new Error("Server response error");
+                const data = await res.json();
+                
+                const conn = document.getElementById('connection-status');
+                conn.innerText = '>>> UPLINK ACTIVE [SYNCED]';
+                conn.classList.remove('connection-error');
+                
+                renderData(data);
+            } catch (err) {
+                console.error(err);
+                const conn = document.getElementById('connection-status');
+                conn.innerText = '!!! SIGNAL LOST !!!';
+                conn.classList.add('connection-error');
+            }
+        }
+        
+        async function fetchHistory() {
+            try {
+                const res = await fetch('/api/history');
+                if (!res.ok) return;
+                const history = await res.json();
+                renderHistory(history);
+            } catch(e) {
+                console.error("History fetch error", e);
+            }
+        }
+
+        function renderHistory(history) {
+            const container = document.getElementById('history-container');
+            const statTotal = document.getElementById('stat-total');
+            
+            // Filter history to ONLY show items that have a time associated with them
+            let filteredHistory = history.filter(item => item.target_time || item.expected_time_text);
+            
+            // Ensure chronologically sorted from newest to oldest
+            filteredHistory.sort((a,b) => new Date(b.received_at) - new Date(a.received_at));
+            
+            if (!filteredHistory || filteredHistory.length === 0) {
+                container.innerHTML = "<div class='history-item' style='text-align:center;'>אין נתונים קודמים עם זמנים במערכת הגיבוי</div>";
+                statTotal.innerText = "0";
+                return;
+            }
+            
+            statTotal.innerText = filteredHistory.length.toString();
+            
+            container.innerHTML = filteredHistory.map(item => {
+                let timeInfo = "";
+                if (item.target_time) {
+                    timeInfo = `<div class="history-time-badge">⏱️ אזעקה: ${new Date(item.target_time).toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</div>`;
+                } else if (item.expected_time_text) {
+                    timeInfo = `<div class="history-time-badge" style="font-family: 'Assistant', sans-serif;">⏱️ צפי: ${item.expected_time_text}</div>`;
+                }
+
+                let areasHtml = '<div style="color: #6b7d8f; text-align: right; font-style: italic;">לא צוין מיקום מדויק</div>';
+                if (item.areas && item.areas.length > 0) {
+                    areasHtml = `<div class="history-areas">${item.areas.map(a => `<span class="hist-area-pill">${a}</span>`).join('')}</div>`;
+                }
+
+                return `
+                <div class="history-item">
+                    <div class="history-header">
+                        ${timeInfo}
+                        <div class="history-date">${formatDateTime(item.received_at)} <span style="color:var(--cyan)">></span></div>
+                    </div>
+                    ${areasHtml}
+                </div>
+            `}).join('');
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+            
+            if (tabId === 'history-tab') fetchHistory();
+        }
+
+        function renderData(data) {
+            const newEventStr = JSON.stringify(data);
+            if (newEventStr === currentEventStr) return;
+            currentEventStr = newEventStr;
+            clearTimers();
+
+            const statusContainer = document.getElementById('status-container');
+            const statusIcon = document.getElementById('status-icon');
+            const statusTitle = document.getElementById('status-title');
+            const unifiedTimer = document.getElementById('unified-timer');
+            const areasContainer = document.getElementById('areas-container');
+            const rawText = document.getElementById('raw-text');
+            const subAlertsContainer = document.getElementById('sub-alerts-container');
+
+            if (!data.has_data) {
+                setSafeState();
+                return;
+            }
+
+            let isRelevant = false;
+            const now = new Date();
+            if (data.target_time) {
+                const target = new Date(data.target_time);
+                isRelevant = ((now - target) / 1000) < (15 * 60);
+            } else if (data.received_at) {
+                const received = new Date(data.received_at);
+                isRelevant = ((now - received) / 1000) < (15 * 60);
+            }
+
+            if (!isRelevant) {
+                setSafeState();
+                return;
+            }
+
+            // ACTIVE ALERT STATE
+            statusContainer.classList.add('alert-active');
+            statusIcon.innerText = "⚠️";
+            statusTitle.innerText = "התרעת שיגור פעילה";
+            
+            rawText.classList.remove('hidden');
+            rawText.innerText = "> " + (data.text || "").replace(/\n/g, "\n> ");
+
+            unifiedTimer.classList.add('hidden');
+            areasContainer.classList.add('hidden');
+
+            subAlertsContainer.innerHTML = '';
+            if (data.alerts && data.alerts.length > 0) {
+                subAlertsContainer.classList.remove('hidden');
+                data.alerts.forEach((alert, index) => {
+                    if (!alert.areas || alert.areas.length === 0) return;
+                    
+                    const card = document.createElement('div');
+                    card.className = 'sub-alert-card';
+                    card.innerHTML = `
+                        <div style="font-weight: 800; font-size:1.1rem; color: #fff;">${alert.areas.join(' | ')}</div>
+                    `;
+                    
+                    if (alert.target_time) {
+                        const timerId = `sub-timer-${index}`;
+                        card.innerHTML += `<div id="${timerId}" class="sub-alert-timer">--:--</div>`;
+                        subAlertsContainer.appendChild(card);
+                        startTimer(timerId, alert.target_time);
+                    } else if (alert.expected_time_text) {
+                        card.innerHTML += `<div class="sub-alert-timer" style="font-size: 1.4rem">${alert.expected_time_text}</div>`;
+                        subAlertsContainer.appendChild(card);
+                    } else if (alert.clock_time) {
+                        card.innerHTML += `<div class="sub-alert-timer" style="font-size: 1.4rem">${alert.clock_time}</div>`;
+                        subAlertsContainer.appendChild(card);
+                    } else {
+                        subAlertsContainer.appendChild(card);
+                    }
+                });
+            } else {
+                subAlertsContainer.classList.add('hidden');
+            }
+
+            function setSafeState() {
+                statusContainer.classList.remove('alert-active');
+                statusIcon.innerText = "🛡️";
+                statusTitle.innerText = "סריקת מערכות תקינה";
+                unifiedTimer.classList.add('hidden');
+                areasContainer.classList.add('hidden');
+                rawText.classList.add('hidden');
+                subAlertsContainer.classList.add('hidden');
+                clearTimers();
+            }
+        }
+
+        fetchLatest();
+        setInterval(fetchLatest, POLL_INTERVAL);
+    </script>
+</body>
+</html>
