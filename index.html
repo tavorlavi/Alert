@@ -3,444 +3,748 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>מערכת התרעות בזמן אמת</title>
+    <title>AIR COMMAND // THREAT DETECTION</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600;700;900&family=Heebo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Heebo:wght@400;700;900&family=Rubik:wght@400;500;700&display=swap');
-        
         :root {
-            --bg-color: #050508;
-            --surface-color: rgba(12, 16, 28, 0.85);
-            --text-color: #cbd5e1;
-            --cyan: #00f3ff;
-            --magenta: #ff003c;
-            --green: #00ff88;
-            --glass: rgba(0, 243, 255, 0.05);
-            --border-glow: 0 0 10px rgba(0, 243, 255, 0.5);
-            --red-glow: 0 0 15px rgba(255, 0, 60, 0.8);
-            --accent-bg: rgba(255, 0, 60, 0.08);
+            --bg:       #020805;
+            --bg2:      #040a06;
+            --phosphor: #39ff14;
+            --p-dim:    rgba(57,255,20,0.55);
+            --p-faint:  rgba(57,255,20,0.12);
+            --p-glow:   rgba(57,255,20,0.45);
+            --p-border: rgba(57,255,20,0.25);
+            --amber:    #ffaa00;
+            --a-dim:    rgba(255,170,0,0.18);
+            --a-glow:   rgba(255,170,0,0.5);
+            --red:      #ff2233;
+            --r-dim:    rgba(255,34,51,0.15);
+            --r-glow:   rgba(255,34,51,0.6);
+            --text:     #7ab87a;
+            --text-dim: #356b35;
+            --scanline: rgba(0,0,0,0.22);
         }
 
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
 
         body {
-            margin: 0;
-            padding: 0;
-            background-color: var(--bg-color);
-            background-image: 
-                linear-gradient(rgba(0, 243, 255, 0.04) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 243, 255, 0.04) 1px, transparent 1px);
-            background-size: 40px 40px;
-            color: var(--text-color);
-            font-family: 'Rubik', sans-serif;
-            text-align: center;
+            background: var(--bg);
+            color: var(--text);
+            /* Base font is Heebo for all Hebrew text */
+            font-family: 'Heebo', sans-serif;
+            min-height: 100vh;
             overflow-x: hidden;
+            position: relative;
+            line-height: 1.5;
         }
 
-        header {
-            background: linear-gradient(90deg, transparent, rgba(0, 243, 255, 0.15), transparent);
-            border-bottom: 2px solid var(--cyan);
-            padding: 1.2rem;
-            font-size: 1.8rem;
-            font-family: 'Heebo', sans-serif;
+        /* Mono for numbers and english only */
+        .mono { font-family: 'Share Tech Mono', monospace; }
+        .orbitron { font-family: 'Orbitron', sans-serif; }
+
+        /* CRT scan-line overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                to bottom,
+                var(--scanline) 0px,
+                var(--scanline) 1px,
+                transparent 1px,
+                transparent 3px
+            );
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.35;
+        }
+
+        /* subtle phosphor bloom on entire page */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 80% 60% at 50% 30%, rgba(57,255,20,0.04) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ── CLASSIFICATION BANNER ──────────────────── */
+        .class-banner {
+            background: var(--phosphor);
+            color: #000;
             font-weight: 900;
-            letter-spacing: 2px;
-            text-shadow: 0 0 12px var(--cyan);
+            font-size: 0.65rem;
+            letter-spacing: 4px;
+            text-align: center;
+            padding: 0.35rem;
+            text-transform: uppercase;
+            position: relative;
+            z-index: 300;
+        }
+
+        /* ── HEADER ─────────────────────────────────── */
+        header {
             position: sticky;
             top: 0;
-            z-index: 100;
-            backdrop-filter: blur(12px);
-            text-transform: uppercase;
-        }
-        
-        .header-glow { color: var(--cyan); }
-
-        .container {
-            padding: 2rem 1rem;
-            max-width: 700px;
-            margin: 0 auto;
-        }
-
-        /* Tabs */
-        .tabs {
+            z-index: 200;
+            background: rgba(2,8,5,0.95);
+            border-bottom: 1px solid var(--p-border);
+            padding: 0 1rem;
+            height: 60px;
             display: flex;
-            justify-content: center;
-            gap: 1.5rem;
-            margin-bottom: 2.5rem;
-        }
-        
-        .tab-btn {
-            background: var(--surface-color);
-            border: 1px solid var(--cyan);
-            color: var(--cyan);
-            padding: 0.6rem 2rem;
-            font-family: 'Heebo', sans-serif;
-            font-weight: 700;
-            font-size: 1.2rem;
-            border-radius: 6px;
-            cursor: pointer;
-            text-shadow: 0 0 8px rgba(0, 243, 255, 0.6);
-            box-shadow: 0 0 10px rgba(0, 243, 255, 0.15);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            text-transform: uppercase;
-        }
-        
-        .tab-btn:hover {
-            background: rgba(0, 243, 255, 0.1);
-            transform: translateY(-2px);
-        }
-
-        .tab-btn.active {
-            background: var(--cyan);
-            color: var(--bg-color);
-            box-shadow: 0 0 20px rgba(0, 243, 255, 0.6);
-            text-shadow: none;
-        }
-
-        .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.5s ease-out; }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* Status Card */
-        .status-card {
-            background-color: var(--surface-color);
-            border-radius: 8px;
-            padding: 2rem 1.5rem;
-            margin-bottom: 1.5rem;
-            border: 1px solid rgba(0, 243, 255, 0.3);
-            backdrop-filter: blur(10px);
-            position: relative;
-            overflow: hidden;
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-        }
-
-        .status-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: -100%;
-            width: 50%; height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(0, 243, 255, 0.1), transparent);
-            transform: skewX(-20deg);
-            animation: scanline 5s infinite;
-            pointer-events: none;
-        }
-
-        @keyframes scanline {
-            0% { left: -100%; }
-            50% { left: 200%; }
-            100% { left: 200%; }
-        }
-
-        .status-card.alert-active {
-            border-color: var(--magenta);
-            animation: red-alert-pulse 1.5s infinite alternate;
-        }
-        
-        .status-card.alert-active::before {
-            background: linear-gradient(90deg, transparent, rgba(255, 0, 60, 0.2), transparent);
-            animation: scanline 2s infinite;
-        }
-
-        @keyframes red-alert-pulse {
-            from { box-shadow: 0 0 10px rgba(255, 0, 60, 0.2), inset 0 0 10px rgba(255, 0, 60, 0.1); }
-            to { box-shadow: 0 0 30px rgba(255, 0, 60, 0.6), inset 0 0 20px rgba(255, 0, 60, 0.2); }
-        }
-
-        .status-icon {
-            font-size: 3.5rem;
-            margin-bottom: 0.5rem;
-            filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.5));
-        }
-        
-        .alert-active .status-icon {
-            filter: drop-shadow(0 0 15px var(--magenta));
-            animation: shake 0.5s infinite cubic-bezier(.36,.07,.19,.97) both;
-        }
-
-        @keyframes shake {
-            10%, 90% { transform: translate3d(-1px, 0, 0); }
-            20%, 80% { transform: translate3d(2px, 0, 0); }
-            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
-            40%, 60% { transform: translate3d(4px, 0, 0); }
-        }
-
-        .status-title {
-            font-size: 1.8rem;
-            font-weight: 800;
-            margin: 0 0 1rem 0;
-            letter-spacing: 1px;
-        }
-
-        .main-timer {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 4.5rem;
-            color: var(--magenta);
-            text-shadow: 0 0 15px var(--magenta);
-            margin: 1rem 0;
-            line-height: 1;
-        }
-
-        .main-timer.expired {
-            color: var(--green);
-            text-shadow: 0 0 15px var(--green);
-        }
-
-        .areas-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.8rem;
-            justify-content: center;
-            margin-bottom: 1.5rem;
-        }
-
-        .area-badge {
-            background: rgba(255, 0, 60, 0.1);
-            color: #fff;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            border: 1px solid var(--magenta);
-            box-shadow: 0 0 8px rgba(255, 0, 60, 0.4);
-            letter-spacing: 0.5px;
-        }
-
-        .raw-text {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 1.1rem;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 1rem;
-            border-radius: 4px;
-            border-left: 3px solid var(--cyan);
-            color: var(--text-color);
-            white-space: pre-wrap;
-            text-align: right;
-            margin-top: 1.5rem;
-        }
-
-        .alert-active .raw-text {
-            border-left-color: var(--magenta);
-            color: #ffcccc;
-        }
-
-        .sub-alerts {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-
-        .sub-alert-card {
-            background: rgba(0, 0, 0, 0.5);
-            border: 1px solid rgba(0, 243, 255, 0.2);
-            border-right: 4px solid var(--magenta);
-            padding: 1rem;
-            text-align: center;
-            position: relative;
-        }
-
-        .sub-alert-timer {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 3.5rem;
-            color: var(--magenta);
-            text-shadow: 0 0 10px rgba(255, 0, 60, 0.5);
-            margin-top: 0.5rem;
-        }
-        
-        .sub-alert-timer.expired {
-            color: var(--green);
-            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-        }
-
-        /* History Tab */
-        .history-list {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-            text-align: right;
-            margin-bottom: 2rem;
-            position: relative;
-            padding-right: 2rem;
-        }
-
-        .history-list::before {
-            content: '';
-            position: absolute;
-            top: 0; bottom: 0; right: 12px;
-            width: 3px;
-            background: linear-gradient(to bottom, var(--cyan), transparent);
-            box-shadow: 0 0 10px var(--cyan);
-            border-radius: 3px;
-        }
-
-        .history-item {
-            background: linear-gradient(135deg, var(--surface-color), rgba(20, 25, 40, 0.9));
-            border: 1px solid rgba(0, 243, 255, 0.2);
-            padding: 1.5rem;
-            border-radius: 12px;
-            position: relative;
-            box-shadow: 0 8px 25px rgba(0,0,0,0.5);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            align-items: center;
+            justify-content: space-between;
             backdrop-filter: blur(8px);
         }
 
-        .history-item::before {
+        .hdr-left {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .hdr-icon {
+            color: var(--phosphor);
+            font-weight: 900;
+            font-size: 1.2rem;
+            text-shadow: 0 0 10px var(--p-glow);
+        }
+
+        .hdr-title {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: var(--phosphor);
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px var(--p-glow);
+            line-height: 1.2;
+        }
+
+        .hdr-sub {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            margin-top: 2px;
+        }
+
+        .hdr-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .hdr-clock {
+            font-size: 1rem;
+            color: var(--phosphor);
+            text-shadow: 0 0 8px var(--p-glow);
+            letter-spacing: 1.5px;
+        }
+
+        .hdr-status-dot {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.65rem;
+            letter-spacing: 1.5px;
+            color: var(--phosphor);
+        }
+
+        .hdr-status-dot::before {
             content: '';
-            position: absolute;
-            top: 2rem; right: -2.3rem;
-            width: 16px; height: 16px;
-            background: var(--bg-color);
-            border: 3px solid var(--cyan);
+            width: 8px; height: 8px;
             border-radius: 50%;
-            box-shadow: 0 0 15px var(--cyan), inset 0 0 5px var(--cyan);
-            z-index: 2;
-            transition: all 0.3s ease;
+            background: var(--phosphor);
+            box-shadow: 0 0 8px var(--p-glow);
+            animation: blink 1.2s ease-in-out infinite;
         }
 
-        .history-item:hover {
-            border-color: var(--cyan);
-            transform: translateX(-8px) scale(1.02);
-            box-shadow: 0 12px 30px rgba(0, 243, 255, 0.15);
+        @keyframes blink {
+            0%,100% { opacity: 1; }
+            50%      { opacity: 0.2; }
         }
 
-        .history-item:hover::before {
-            background: var(--cyan);
-            box-shadow: 0 0 20px var(--cyan);
-            transform: scale(1.2);
-        }
-
-        .history-header {
+        /* ── PAGE ───────────────────────────────────── */
+        .page {
+            position: relative;
+            z-index: 1;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem 4rem;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px dashed rgba(0, 243, 255, 0.2);
-            padding-bottom: 1rem;
-            margin-bottom: 1rem;
+            flex-direction: column;
+            gap: 1.5rem;
         }
 
-        .history-time-badge {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 1.3rem;
-            color: var(--magenta);
-            font-weight: 800;
-            text-shadow: 0 0 12px rgba(255, 0, 60, 0.5);
+        /* ── RADAR + STATUS CARD ─────────────────────── */
+        .main-panel {
             display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
             align-items: center;
-            gap: 0.5rem;
-            background: var(--accent-bg);
-            padding: 0.4rem 0.8rem;
+        }
+
+        /* RADAR SCOPE */
+        .radar-scope {
+            background: radial-gradient(circle at center,
+                rgba(57,255,20,0.08) 0%,
+                rgba(57,255,20,0.03) 40%,
+                rgba(0,0,0,0.6) 100%);
+            border: 1px solid var(--p-border);
+            border-radius: 50%;
+            width: 180px; height: 180px;
+            position: relative;
+            box-shadow:
+                0 0 0 1px rgba(57,255,20,0.1),
+                0 0 30px rgba(57,255,20,0.08),
+                inset 0 0 30px rgba(57,255,20,0.05);
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .radar-scope::before {
+            content: ''; position: absolute; inset: 0;
+            background:
+                radial-gradient(circle at center, transparent 24%, var(--p-border) 25%, transparent 26%),
+                radial-gradient(circle at center, transparent 49%, var(--p-border) 50%, transparent 51%),
+                radial-gradient(circle at center, transparent 74%, var(--p-border) 75%, transparent 76%);
+            border-radius: 50%;
+        }
+
+        .radar-scope::after {
+            content: ''; position: absolute; inset: 0;
+            background:
+                linear-gradient(to bottom, transparent 49.5%, rgba(57,255,20,0.2) 50%, transparent 50.5%),
+                linear-gradient(to right,  transparent 49.5%, rgba(57,255,20,0.2) 50%, transparent 50.5%);
+            border-radius: 50%;
+        }
+
+        .radar-sweep {
+            position: absolute; top: 50%; left: 50%;
+            width: 50%; height: 1px;
+            transform-origin: 0% 50%;
+            animation: sweep 4s linear infinite;
+        }
+
+        .radar-sweep::before {
+            content: ''; position: absolute; top: -60px; left: 0;
+            width: 100%; height: 120px;
+            background: conic-gradient(from -90deg at 0% 50%,
+                rgba(57,255,20,0.5) 0deg,
+                rgba(57,255,20,0.15) 30deg,
+                transparent 60deg);
+            transform-origin: 0% 50%;
+        }
+
+        .radar-sweep::after {
+            content: ''; position: absolute; right: 0; top: -1px;
+            width: 4px; height: 3px; border-radius: 50%;
+            background: var(--phosphor);
+            box-shadow: 0 0 6px var(--phosphor), 0 0 12px var(--p-glow);
+        }
+
+        @keyframes sweep { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .radar-blip {
+            position: absolute; width: 8px; height: 8px; border-radius: 50%;
+            background: var(--red);
+            box-shadow: 0 0 10px var(--red), 0 0 20px var(--r-glow);
+            opacity: 0; top: 28%; left: 60%;
+            transition: opacity 0.5s ease;
+            animation: blip-pulse 1s ease-in-out infinite;
+        }
+
+        .radar-blip:nth-child(2) { top: 55%; left: 30%; animation-delay: 0.3s; }
+        .radar-blip:nth-child(3) { top: 70%; left: 65%; animation-delay: 0.6s; }
+
+        @keyframes blip-pulse {
+            0%,100% { box-shadow: 0 0 6px var(--red), 0 0 14px var(--r-glow); transform: scale(1); }
+            50%      { box-shadow: 0 0 14px var(--red), 0 0 28px var(--r-glow); transform: scale(1.4); }
+        }
+
+        .alert-active-mode .radar-blip { opacity: 1; }
+
+        .radar-label {
+            position: absolute; font-size: 0.55rem; color: var(--p-dim); letter-spacing: 1px;
+        }
+        .radar-label.n { top: 4px; left: 50%; transform: translateX(-50%); }
+        .radar-label.e { top: 50%; right: 4px; transform: translateY(-50%); }
+        .radar-label.s { bottom: 4px; left: 50%; transform: translateX(-50%); }
+        .radar-label.w { top: 50%; left: 4px; transform: translateY(-50%); }
+
+        /* STATUS PANEL */
+        .status-panel {
+            background: rgba(4,10,6,0.9);
+            border: 1px solid var(--p-border);
             border-radius: 6px;
-            border-right: 3px solid var(--magenta);
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            text-align: center;
         }
-        
-        .history-date {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 0.95rem;
-            color: var(--cyan);
-            opacity: 0.8;
+
+        .status-panel::before {
+            content: '[ SYSTEM STATE ]';
+            position: absolute;
+            top: -1px; left: 1rem;
+            font-size: 0.65rem;
+            letter-spacing: 2px;
+            color: var(--bg);
+            background: var(--phosphor);
+            padding: 0.1rem 0.6rem;
+            line-height: 1.2;
+        }
+
+        .status-panel.threat-active {
+            border-color: var(--red);
+            box-shadow: 0 0 30px rgba(255,34,51,0.2), inset 0 0 25px rgba(255,34,51,0.08);
+            animation: threat-flash 1.2s ease-in-out infinite alternate;
+        }
+
+        @keyframes threat-flash {
+            from { box-shadow: 0 0 15px rgba(255,34,51,0.15), inset 0 0 10px rgba(255,34,51,0.05); }
+            to   { box-shadow: 0 0 40px rgba(255,34,51,0.35), inset 0 0 30px rgba(255,34,51,0.15); }
+        }
+
+        .status-panel.threat-active::before {
+            background: var(--red);
+            content: '[ THREAT DETECTED ]';
+            animation: label-blink 0.7s steps(1) infinite;
+        }
+
+        @keyframes label-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+        .status-state {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--phosphor);
+            text-shadow: 0 0 14px var(--p-glow);
+            letter-spacing: 1px;
+            margin-top: 0.5rem;
+            transition: color 0.4s ease, text-shadow 0.4s ease;
+        }
+
+        .threat-active .status-state {
+            color: var(--red);
+            text-shadow: 0 0 18px var(--r-glow);
+            animation: text-flicker 0.15s steps(1) infinite;
+        }
+
+        @keyframes text-flicker {
+            0%,94%,100% { opacity: 1; }
+            95%          { opacity: 0.85; }
+            97%          { opacity: 0.9; }
+        }
+
+        .status-meta {
+            font-size: 1.1rem;
+            color: var(--text-dim);
+            margin-top: 0.5rem;
+            font-weight: 600;
+        }
+
+        .main-timer {
+            font-size: 4.5rem;
+            font-weight: 700;
+            color: var(--red);
+            text-shadow: 0 0 25px var(--r-glow);
+            letter-spacing: 2px;
+            line-height: 1;
+            margin: 1rem 0;
+        }
+
+        .main-timer.expired {
+            color: var(--phosphor);
+            text-shadow: 0 0 20px var(--p-glow);
+        }
+
+        .raw-text {
+            font-size: 0.9rem;
+            line-height: 1.6;
+            background: rgba(0,0,0,0.6);
+            padding: 1rem;
+            border-right: 3px solid var(--p-border);
+            color: var(--text);
+            white-space: pre-wrap;
+            text-align: right;
+            margin-top: 1.25rem;
+            border-radius: 4px;
+        }
+
+        .threat-active .raw-text {
+            border-right-color: var(--red);
+            color: #ff9999;
+        }
+
+        /* ── INTERCEPT VECTORS (sub-alert cards) ─────── */
+        .sub-alerts {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            width: 100%;
+        }
+
+        .sub-alert-card {
+            background: linear-gradient(90deg, rgba(255,34,51,0.12), rgba(255,34,51,0.04));
+            border: 1px solid rgba(255,34,51,0.3);
+            border-radius: 6px;
+            padding: 1rem 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            position: relative;
+            overflow: hidden;
+            animation: slideIn 0.35s ease both;
+        }
+
+        .sub-alert-card::before {
+            content: attr(data-index);
+            position: absolute;
+            top: 0.35rem; left: 0.6rem;
+            font-size: 0.55rem;
+            color: rgba(255,34,51,0.5);
             letter-spacing: 1px;
         }
 
-        .history-areas {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.8rem;
-            margin: 0;
-            padding-top: 0.5rem;
-        }
-        
-        .hist-area-pill {
-            background: rgba(255, 0, 60, 0.08);
-            color: #ffcccc;
-            padding: 0.5rem 1rem;
-            border-radius: 25px;
-            font-size: 1.1rem;
-            font-family: 'Heebo', sans-serif;
-            font-weight: 700;
-            border: 1px solid rgba(255, 0, 60, 0.4);
-            box-shadow: 0 2px 8px rgba(255, 0, 60, 0.15);
-            transition: all 0.2s;
-        }
-        
-        .hist-area-pill:hover {
-            background: rgba(255, 0, 60, 0.2);
-            box-shadow: 0 0 12px rgba(255, 0, 60, 0.4);
-            transform: translateY(-2px);
+        .sub-alert-card::after {
+            content: ''; position: absolute; right: 0; top: 0; bottom: 0;
+            width: 4px; background: linear-gradient(to bottom, var(--red), transparent);
         }
 
-        .hidden { display: none !important; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(12px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .vec-designator {
+            font-size: 0.65rem;
+            color: rgba(255,34,51,0.6);
+            letter-spacing: 1px;
+            margin-bottom: 0.3rem;
+            font-weight: 700;
+        }
+
+        .vec-areas {
+            font-size: 1.2rem;
+            font-weight: 800;
+            color: #fff;
+            line-height: 1.3;
+        }
+
+        .sub-alert-timer {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--red);
+            text-shadow: 0 0 16px var(--r-glow);
+            letter-spacing: 1px;
+            flex-shrink: 0;
+            text-align: left;
+        }
+
+        .sub-alert-timer.expired {
+            color: var(--phosphor);
+            text-shadow: 0 0 14px var(--p-glow);
+        }
+
+        .sub-alert-timer.text-time {
+            font-size: 1.25rem;
+            color: var(--amber);
+            text-shadow: 0 0 10px var(--a-glow);
+        }
+
+        /* ── SECTION DIVIDER ─────────────────────────── */
+        .section-divider {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            color: var(--text-dim);
+            font-weight: 700;
+            width: 100%;
+        }
+
+        .section-divider::before,
+        .section-divider::after {
+            content: ''; flex: 1; height: 1px;
+            background: linear-gradient(to left, var(--p-border), transparent);
+        }
+
+        .section-divider::before {
+            background: linear-gradient(to right, var(--p-border), transparent);
+        }
+
+        /* ── STATS ROW ───────────────────────────────── */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        .stat-box {
+            background: rgba(4,10,6,0.8);
+            border: 1px solid var(--p-border);
+            border-radius: 4px;
+            padding: 0.75rem 0.5rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .stat-val {
+            font-size: 1.35rem;
+            color: var(--phosphor);
+            font-weight: 700;
+            text-shadow: 0 0 8px var(--p-glow);
+            line-height: 1;
+        }
+
+        .stat-lbl {
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            font-weight: 700;
+        }
+
+        /* ── HISTORY CARDS ── */
+        .hist-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            width: 100%;
+            max-height: 400px;
+            overflow-y: auto;
+            padding-left: 6px; /* Space for scrollbar */
+        }
+
+        .hist-list::-webkit-scrollbar { width: 4px; }
+        .hist-list::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        .hist-list::-webkit-scrollbar-thumb { background: var(--p-border); border-radius: 4px; }
+
+        .hist-card {
+            background: linear-gradient(90deg, rgba(4,10,6,0.95), rgba(4,10,6,0.7));
+            border: 1px solid var(--p-border);
+            border-right: 4px solid var(--phosphor);
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .hist-card:hover {
+            background: linear-gradient(90deg, rgba(57,255,20,0.08), rgba(4,10,6,0.8));
+            border-color: rgba(57,255,20,0.4);
+        }
+
+        .hist-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px dashed rgba(57,255,20,0.15);
+            padding-bottom: 0.5rem;
+        }
+
+        .hist-impact {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--red);
+            background: rgba(255,34,51,0.08);
+            border: 1px solid rgba(255,34,51,0.25);
+            padding: 0.15rem 0.6rem;
+            border-radius: 3px;
+            font-weight: 700;
+            box-shadow: 0 0 10px rgba(255,34,51,0.1);
+        }
+
+        .hist-date {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            font-weight: 600;
+        }
+
+        .hist-areas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .hist-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            background: rgba(57,255,20,0.05);
+            color: var(--phosphor);
+            padding: 0.15rem 0.5rem;
+            border-radius: 2px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid rgba(57,255,20,0.2);
+            text-shadow: 0 0 5px var(--p-glow);
+        }
+
+        .svg-icon {
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }
         
-        #connection-status {
-            font-family: "Share Tech Mono", monospace;
+        .hist-empty {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
             font-size: 0.9rem;
-            color: var(--cyan);
-            margin-top: 2rem;
-            text-shadow: 0 0 5px rgba(0, 243, 255, 0.5);
+            border: 1px dashed var(--p-border);
+            border-radius: 6px;
         }
-        
-        .connection-error {
-            color: var(--magenta) !important;
-            text-shadow: 0 0 5px rgba(255, 0, 60, 0.5) !important;
+
+        /* ── CONNECTION BAR ──────────────────────────── */
+        .comms-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.6rem 1rem;
+            background: rgba(4,10,6,0.85);
+            border: 1px solid var(--p-border);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--phosphor);
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 6px var(--p-glow);
+            transition: all 0.3s ease;
+            width: 100%;
+            justify-content: center;
         }
-        
-        .sys-data {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 0.8rem;
-            color: #445;
-            position: fixed;
-            bottom: 5px; right: 5px;
-            pointer-events: none;
+
+        .comms-bar::before {
+            content: '';
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--phosphor);
+            box-shadow: 0 0 8px var(--p-glow);
+            animation: blink 1.2s ease-in-out infinite;
+            flex-shrink: 0;
         }
+
+        .comms-bar.signal-lost {
+            color: var(--red);
+            border-color: rgba(255,34,51,0.35);
+            text-shadow: 0 0 6px var(--r-glow);
+        }
+
+        .comms-bar.signal-lost::before {
+            background: var(--red);
+            box-shadow: 0 0 8px var(--red);
+            animation: none;
+        }
+
     </style>
 </head>
 <body>
+
+    <div class="class-banner orbitron">[*] TOP SECRET // AIR COMMAND // THREAT DETECTION [*]</div>
+
     <header>
-        <span class="header-glow">//</span> מערכת התרעות בזמן אמת <span class="header-glow">_</span>
+        <div class="hdr-left">
+            <div class="hdr-icon">[!]</div>
+            <div>
+                <div class="hdr-title orbitron">AIR COMMAND</div>
+                <div class="hdr-sub orbitron">EARLY WARNING // INTERCEPT SYSTEM</div>
+            </div>
+        </div>
+        <div class="hdr-right">
+            <div class="hdr-clock mono" id="hdr-clock">--:--:--</div>
+            <div class="hdr-status-dot orbitron" id="hdr-link">UPLINK</div>
+        </div>
     </header>
 
-    <div class="container">
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('rt-tab')">👁️ זמן אמת</button>
-            <button class="tab-btn" onclick="switchTab('history-tab')">📊 היסטוריה וסטטיסטיקות</button>
-        </div>
+    <div class="page">
+        <!-- ── RADAR + STATUS ── -->
+        <div class="main-panel" id="main-panel">
+            <div class="radar-scope" id="radar-scope">
+                <div class="radar-sweep"></div>
+                <div class="radar-blip"></div>
+                <div class="radar-blip"></div>
+                <div class="radar-blip"></div>
+                <span class="radar-label n mono">N</span>
+                <span class="radar-label e mono">E</span>
+                <span class="radar-label s mono">S</span>
+                <span class="radar-label w mono">W</span>
+            </div>
 
-        <div id="rt-tab" class="tab-content active">
-            <div id="status-container" class="status-card">
-                <div id="status-icon" class="status-icon">🛡️</div>
-                <h2 id="status-title" class="status-title">סריקת מערכות תקינה</h2>
-                <div id="unified-timer" class="main-timer hidden">00:00</div>
-                
-                <div id="areas-container" class="areas-list hidden"></div>
-                
+            <div class="status-panel" id="status-container">
+                <div class="status-state" id="status-title">סריקת מערכות תקינה</div>
+                <div class="status-meta" id="status-icon">מצב ניטור שגרתי</div>
+
+                <div id="unified-timer" class="main-timer mono" style="display:none;">--:--</div>
                 <div id="raw-text" class="raw-text hidden"></div>
             </div>
-
-            <div id="sub-alerts-container" class="sub-alerts hidden"></div>
         </div>
 
-        <div id="history-tab" class="tab-content">
-            <div id="history-stats" style="display:flex; justify-content:space-around; background:rgba(0,243,255,0.05); border:1px solid rgba(0,243,255,0.2); border-radius:4px; padding:1rem; margin-bottom:1.5rem;">
-                <!-- Auto Updated Stats -->
-                <div style="text-align:center;">
-                    <div style="font-size:2rem; color:var(--magenta); font-family:'Share Tech Mono', monospace; font-weight:bold; text-shadow:0 0 10px rgba(255,0,60,0.5);" id="stat-total">0</div>
-                    <div style="font-size:0.9rem; color:var(--cyan);">סה"כ התרעות</div>
-                </div>
+        <!-- ── INTERCEPT VECTORS ── -->
+        <div id="sub-alerts-wrapper" class="hidden">
+            <div class="section-divider">מסלולי יירוט פעילים</div>
+            <br>
+            <div id="sub-alerts-container" class="sub-alerts"></div>
+        </div>
+
+        <!-- ── STATS SECTION ── -->
+        <div class="section-divider">רשומות יירוט</div>
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="stat-val mono" id="stat-total">-</div>
+                <div class="stat-lbl orbitron">TOTAL</div>
             </div>
-            
-            <div id="history-container" class="history-list">
-                טוען נתונים...
+            <div class="stat-box">
+                <div class="stat-val mono" id="stat-today">-</div>
+                <div class="stat-lbl orbitron">TODAY</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="stat-top" style="font-size:0.95rem; margin:auto 0;">-</div>
+                <div class="stat-lbl orbitron">HOT SECTOR</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val mono" id="stat-last" style="font-size:0.95rem; margin:auto 0;">-</div>
+                <div class="stat-lbl orbitron">LAST ALERT</div>
             </div>
         </div>
-        
-        <div id="connection-status">SYSTEM LINK ESTABLISHED</div>
+
+        <!-- ── HISTORY CARDS ── -->
+        <div class="hist-list" id="history-container">
+            <div class="hist-empty">מייבא נתונים...</div>
+        </div>
+
+        <!-- ── COMMS ── -->
+        <div class="comms-bar orbitron" id="connection-status">
+            >> COMMS LINK ESTABLISHED // DATA FEED ACTIVE
+        </div>
     </div>
-    
-    <div class="sys-data">V.2.0.4 ONLINE | RADAR: SECURE</div>
 
     <script>
-        const POLL_INTERVAL = 3000;
+        function tickClock() {
+            const now = new Date();
+            document.getElementById('hdr-clock').textContent =
+                now.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        }
+        tickClock();
+        setInterval(tickClock, 1000);
+
+        const POLL_INTERVAL    = 3000;
+        const HISTORY_INTERVAL = 30000;
         let currentEventStr = null;
         let timers = [];
 
@@ -449,212 +753,227 @@
             timers = [];
         }
 
-        function formatTimeDiff(diffSeconds) {
-            if (diffSeconds < 0) return "אזעקה!";
-            const mins = Math.floor(diffSeconds / 60);
-            const secs = Math.floor(diffSeconds % 60);
-            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        function formatTimeDiff(s) {
+            if (s < 0) return "IMPACT";
+            return `${Math.floor(s/60).toString().padStart(2,'0')}:${Math.floor(s%60).toString().padStart(2,'0')}`;
         }
-        
-        function formatDateTime(isoStr) {
+
+        function militaryTime(isoStr) {
             const d = new Date(isoStr);
-            return d.toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit', second:'2-digit'}) + 
-                   " | " + d.toLocaleDateString('he-IL');
+            return d.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
         }
 
-        function startTimer(elementId, targetTimeStr) {
-            const el = document.getElementById(elementId);
-            if (!el || !targetTimeStr) return;
-            const targetDate = new Date(targetTimeStr);
+        function shortDate(isoStr) {
+            const d = new Date(isoStr);
+            return `${d.getDate().toString().padStart(2,'0')}.${(d.getMonth()+1).toString().padStart(2,'0')}.${d.getFullYear()}`;
+        }
 
-            const updateTimer = () => {
-                const now = new Date();
-                const diffSeconds = (targetDate - now) / 1000;
-                
-                el.innerText = formatTimeDiff(diffSeconds);
-                if (diffSeconds <= 0) {
-                    el.classList.add("expired");
-                } else {
-                    el.classList.remove("expired");
-                }
+        function isToday(isoStr) {
+            const d = new Date(isoStr);
+            const now = new Date();
+            return d.getDate() === now.getDate() &&
+                   d.getMonth() === now.getMonth() &&
+                   d.getFullYear() === now.getFullYear();
+        }
+
+        function startTimer(id, targetStr) {
+            const el = document.getElementById(id);
+            if (!el || !targetStr) return;
+            const target = new Date(targetStr);
+            const update = () => {
+                const diff = (target - new Date()) / 1000;
+                el.textContent = formatTimeDiff(diff);
+                el.classList.toggle('expired', diff <= 0);
             };
-            updateTimer();
-            const interval = setInterval(updateTimer, 1000);
-            timers.push({ elementId, interval });
+            update();
+            const interval = setInterval(update, 1000);
+            timers.push({ id, interval });
+        }
+
+        function setComms(ok) {
+            const el = document.getElementById('connection-status');
+            const lk = document.getElementById('hdr-link');
+            el.textContent = ok
+                ? '>> COMMS LINK ACTIVE // UPLINK SYNCED'
+                : '[!] SIGNAL LOST // RETRYING...';
+            el.classList.toggle('signal-lost', !ok);
+            lk.style.color = ok ? '' : 'var(--red)';
+        }
+
+        function setSafe() {
+            document.getElementById('status-container').classList.remove('threat-active');
+            document.getElementById('main-panel').classList.remove('alert-active-mode');
+            document.getElementById('status-title').textContent = 'סריקת מערכות תקינה';
+            document.getElementById('status-icon').textContent = '[ מצב ניטור שגרתי ]';
+            document.getElementById('unified-timer').style.display = 'none';
+            document.getElementById('raw-text').classList.add('hidden');
+            document.getElementById('sub-alerts-wrapper').classList.add('hidden');
+            clearTimers();
         }
 
         async function fetchLatest() {
             try {
-                const res = await fetch('/api/latest');
-                if (!res.ok) throw new Error("Server response error");
-                const data = await res.json();
-                
-                const conn = document.getElementById('connection-status');
-                conn.innerText = '>>> UPLINK ACTIVE [SYNCED]';
-                conn.classList.remove('connection-error');
-                
+                const data = await (await fetch('/api/latest')).json();
+                setComms(true);
                 renderData(data);
-            } catch (err) {
-                console.error(err);
-                const conn = document.getElementById('connection-status');
-                conn.innerText = '!!! SIGNAL LOST !!!';
-                conn.classList.add('connection-error');
-            }
+            } catch { setComms(false); }
         }
-        
+
         async function fetchHistory() {
             try {
-                const res = await fetch('/api/history');
-                if (!res.ok) return;
-                const history = await res.json();
-                renderHistory(history);
-            } catch(e) {
-                console.error("History fetch error", e);
-            }
+                const h = await (await fetch('/api/history')).json();
+                renderHistory(h);
+            } catch(e) { console.error(e); }
         }
 
         function renderHistory(history) {
             const container = document.getElementById('history-container');
-            const statTotal = document.getElementById('stat-total');
-            
-            // Filter history to ONLY show items that have a time associated with them
-            let filteredHistory = history.filter(item => item.target_time || item.expected_time_text);
-            
-            // Ensure chronologically sorted from newest to oldest
-            filteredHistory.sort((a,b) => new Date(b.received_at) - new Date(a.received_at));
-            
-            if (!filteredHistory || filteredHistory.length === 0) {
-                container.innerHTML = "<div class='history-item' style='text-align:center;'>אין נתונים קודמים עם זמנים במערכת הגיבוי</div>";
-                statTotal.innerText = "0";
+
+            const list = history
+                .filter(i => i.target_time || i.expected_time_text)
+                .sort((a,b) => new Date(b.received_at) - new Date(a.received_at));
+
+            // -- CALCULATE STATS --
+            document.getElementById('stat-total').textContent = list.length;
+
+            const todayCount = list.filter(i => isToday(i.received_at)).length;
+            document.getElementById('stat-today').textContent = todayCount;
+
+            // Most frequent area
+            const areaCounts = {};
+            let mostFreqArea = '-';
+            let maxCount = 0;
+            list.forEach(item => {
+                if (item.areas) {
+                    item.areas.forEach(a => {
+                        areaCounts[a] = (areaCounts[a] || 0) + 1;
+                        if (areaCounts[a] > maxCount) {
+                            maxCount = areaCounts[a];
+                            mostFreqArea = a;
+                        }
+                    });
+                }
+            });
+            document.getElementById('stat-top').textContent = mostFreqArea;
+
+            // Time since last alert
+            if (list.length > 0) {
+                const lastAlertDate = new Date(list[0].received_at);
+                const diffMs = new Date() - lastAlertDate;
+                const diffMins = Math.floor(diffMs / 60000);
+                let lastStr = '';
+                if (diffMins < 60) lastStr = `${diffMins}m AGO`;
+                else if (diffMins < 1440) lastStr = `${Math.floor(diffMins/60)}h AGO`;
+                else lastStr = `${Math.floor(diffMins/1440)}d AGO`;
+                document.getElementById('stat-last').textContent = lastStr;
+            }
+
+            // -- RENDER CARDS --
+            if (!list.length) {
+                container.innerHTML = '<div class="hist-empty">אין נתונים זמינים</div>';
                 return;
             }
-            
-            statTotal.innerText = filteredHistory.length.toString();
-            
-            container.innerHTML = filteredHistory.map(item => {
-                let timeInfo = "";
-                if (item.target_time) {
-                    timeInfo = `<div class="history-time-badge">⏱️ אזעקה: ${new Date(item.target_time).toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</div>`;
-                } else if (item.expected_time_text) {
-                    timeInfo = `<div class="history-time-badge" style="font-family: 'Assistant', sans-serif;">⏱️ צפי: ${item.expected_time_text}</div>`;
-                }
 
-                let areasHtml = '<div style="color: #6b7d8f; text-align: right; font-style: italic;">לא צוין מיקום מדויק</div>';
-                if (item.areas && item.areas.length > 0) {
-                    areasHtml = `<div class="history-areas">${item.areas.map(a => `<span class="hist-area-pill">${a}</span>`).join('')}</div>`;
+            container.innerHTML = list.map(item => {
+                let impact = '—';
+                if (item.target_time) impact = militaryTime(item.target_time);
+                else if (item.expected_time_text) impact = item.expected_time_text;
+
+                const ts = `${shortDate(item.received_at)} | ${militaryTime(item.received_at)}`;
+
+                const iconTarget = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm0-13a5 5 0 100 10 5 5 0 000-10zm0 8a3 3 0 110-6 3 3 0 010 6z"></path></svg>`;
+                const iconClock = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm1-8.41V7h-2v5.41l3.59 3.59 1.41-1.41L13 11.59z"></path></svg>`;
+                const iconPin = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"></path></svg>`;
+
+                let areas = `<span style="color:var(--text-dim); font-size:0.85rem;">[ בלתי ידוע ]</span>`;
+                if (item.areas && item.areas.length) {
+                    areas = item.areas.map(a => `<span class="hist-pill">${iconPin} ${a}</span>`).join('');
                 }
 
                 return `
-                <div class="history-item">
-                    <div class="history-header">
-                        ${timeInfo}
-                        <div class="history-date">${formatDateTime(item.received_at)} <span style="color:var(--cyan)">></span></div>
+                <div class="hist-card">
+                    <div class="hist-top">
+                        <div class="hist-impact mono">${iconTarget} <span>[ T-IMPACT : ${impact} ]</span></div>
+                        <div class="hist-date mono">${iconClock} <span>${ts}</span></div>
                     </div>
-                    ${areasHtml}
-                </div>
-            `}).join('');
-        }
-
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            
-            document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
-            
-            if (tabId === 'history-tab') fetchHistory();
+                    <div class="hist-areas">${areas}</div>
+                </div>`;
+            }).join('');
         }
 
         function renderData(data) {
-            const newEventStr = JSON.stringify(data);
-            if (newEventStr === currentEventStr) return;
-            currentEventStr = newEventStr;
+            const str = JSON.stringify(data);
+            if (str === currentEventStr) return;
+            currentEventStr = str;
             clearTimers();
 
-            const statusContainer = document.getElementById('status-container');
-            const statusIcon = document.getElementById('status-icon');
-            const statusTitle = document.getElementById('status-title');
-            const unifiedTimer = document.getElementById('unified-timer');
-            const areasContainer = document.getElementById('areas-container');
-            const rawText = document.getElementById('raw-text');
-            const subAlertsContainer = document.getElementById('sub-alerts-container');
+            if (!data.has_data) { setSafe(); return; }
 
-            if (!data.has_data) {
-                setSafeState();
-                return;
-            }
-
-            let isRelevant = false;
             const now = new Date();
-            if (data.target_time) {
-                const target = new Date(data.target_time);
-                isRelevant = ((now - target) / 1000) < (15 * 60);
-            } else if (data.received_at) {
-                const received = new Date(data.received_at);
-                isRelevant = ((now - received) / 1000) < (15 * 60);
-            }
+            let relevant = false;
+            if (data.target_time)  relevant = ((now - new Date(data.target_time))  / 1000) < 900;
+            else if (data.received_at) relevant = ((now - new Date(data.received_at)) / 1000) < 900;
+            if (!relevant) { setSafe(); return; }
 
-            if (!isRelevant) {
-                setSafeState();
-                return;
-            }
+            // THREAT STATE
+            document.getElementById('status-container').classList.add('threat-active');
+            document.getElementById('main-panel').classList.add('alert-active-mode');
+            document.getElementById('status-title').textContent = 'התרעת שיגור פעילה';
+            document.getElementById('status-icon').textContent = '[!] סכנה ממשית [!]';
 
-            // ACTIVE ALERT STATE
-            statusContainer.classList.add('alert-active');
-            statusIcon.innerText = "⚠️";
-            statusTitle.innerText = "התרעת שיגור פעילה";
-            
-            rawText.classList.remove('hidden');
-            rawText.innerText = "> " + (data.text || "").replace(/\n/g, "\n> ");
+            const raw = document.getElementById('raw-text');
+            raw.classList.remove('hidden');
+            raw.textContent = '>> ' + (data.text || '').replace(/\n/g, '\n>> ');
 
-            unifiedTimer.classList.add('hidden');
-            areasContainer.classList.add('hidden');
+            document.getElementById('unified-timer').style.display = 'none';
 
-            subAlertsContainer.innerHTML = '';
-            if (data.alerts && data.alerts.length > 0) {
-                subAlertsContainer.classList.remove('hidden');
-                data.alerts.forEach((alert, index) => {
-                    if (!alert.areas || alert.areas.length === 0) return;
-                    
+            const wrapper = document.getElementById('sub-alerts-wrapper');
+            const cont    = document.getElementById('sub-alerts-container');
+            cont.innerHTML = '';
+
+            if (data.alerts && data.alerts.length) {
+                wrapper.classList.remove('hidden');
+                data.alerts.forEach((alert, i) => {
+                    if (!alert.areas || !alert.areas.length) return;
+
                     const card = document.createElement('div');
                     card.className = 'sub-alert-card';
-                    card.innerHTML = `
-                        <div style="font-weight: 800; font-size:1.1rem; color: #fff;">${alert.areas.join(' | ')}</div>
-                    `;
-                    
+                    card.style.animationDelay = `${i * 0.07}s`;
+                    card.dataset.index = `VEC-0${i+1}`;
+
+                    const left = document.createElement('div');
+                    left.innerHTML = `
+                        <div class="vec-designator orbitron">[ INTERCEPT VEC-0${i+1} ]</div>
+                        <div class="vec-areas">${alert.areas.join(' // ')}</div>`;
+                    card.appendChild(left);
+
                     if (alert.target_time) {
-                        const timerId = `sub-timer-${index}`;
-                        card.innerHTML += `<div id="${timerId}" class="sub-alert-timer">--:--</div>`;
-                        subAlertsContainer.appendChild(card);
-                        startTimer(timerId, alert.target_time);
-                    } else if (alert.expected_time_text) {
-                        card.innerHTML += `<div class="sub-alert-timer" style="font-size: 1.4rem">${alert.expected_time_text}</div>`;
-                        subAlertsContainer.appendChild(card);
-                    } else if (alert.clock_time) {
-                        card.innerHTML += `<div class="sub-alert-timer" style="font-size: 1.4rem">${alert.clock_time}</div>`;
-                        subAlertsContainer.appendChild(card);
+                        const id = `sub-timer-${i}`;
+                        const t = document.createElement('div');
+                        t.id = id; t.className = 'sub-alert-timer mono';
+                        t.textContent = '--:--';
+                        card.appendChild(t);
+                        cont.appendChild(card);
+                        startTimer(id, alert.target_time);
+                    } else if (alert.expected_time_text || alert.clock_time) {
+                        const t = document.createElement('div');
+                        t.className = 'sub-alert-timer text-time mono';
+                        t.textContent = alert.expected_time_text || alert.clock_time;
+                        card.appendChild(t);
+                        cont.appendChild(card);
                     } else {
-                        subAlertsContainer.appendChild(card);
+                        cont.appendChild(card);
                     }
                 });
             } else {
-                subAlertsContainer.classList.add('hidden');
-            }
-
-            function setSafeState() {
-                statusContainer.classList.remove('alert-active');
-                statusIcon.innerText = "🛡️";
-                statusTitle.innerText = "סריקת מערכות תקינה";
-                unifiedTimer.classList.add('hidden');
-                areasContainer.classList.add('hidden');
-                rawText.classList.add('hidden');
-                subAlertsContainer.classList.add('hidden');
-                clearTimers();
+                wrapper.classList.add('hidden');
             }
         }
 
         fetchLatest();
+        fetchHistory();
         setInterval(fetchLatest, POLL_INTERVAL);
+        setInterval(fetchHistory, HISTORY_INTERVAL);
     </script>
 </body>
 </html>

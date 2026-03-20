@@ -160,7 +160,7 @@ def extract_areas_from_text(text):
         if not line:
             continue
         if any(skip in line for skip in [
-            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "כרגע", "לכרגע", "פרטים", "נוספים"
+            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים"
         ]):
             continue
             
@@ -171,8 +171,8 @@ def extract_areas_from_text(text):
         # Strip exact time formats and time units so they don't become areas
         line = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line)
         line = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line)
-        line = re.sub(r'צפי|משך|עוד|לאזעקה', '', line)
-        line = re.sub(r'[*_Ã°Å¸Å¡Â¨Ã¢Å“â€¦Ã¢Å¡Â Ã¯Â¸ÂÃ¢â€ºâ€Ã¯Â¸ÂÃ°Å¸â€˜â€¡Ã°Å¸â€œÂ\.]', '', line)
+        line = re.sub(r'צפי|משך|עוד|לאזעקה|כעת|כרגע|לכרגע', '', line)
+        line = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line)  # strip emojis
         
         for part in re.split(r'[,/|\-\n]', line):
             part = re.sub(r'\(.*?\)', '', part).strip()
@@ -181,7 +181,7 @@ def extract_areas_from_text(text):
             found_known = False
             for ka in KNOWN_AREAS:
                 # Allow standard Hebrew prefixes on regions
-                if re.search(r'(?<![א-ת])(?:[בלמהמש])?' + ka + r'(?![א-ת])', part):
+                if re.search(r'(?<![א-ת])(?:[בלמה])?' + ka + r'(?![א-ת])', part):
                     if ka not in seen:
                         seen.add(ka)
                         areas.append(ka)
@@ -192,7 +192,7 @@ def extract_areas_from_text(text):
                 # Remove excluded words
                 words = [w for w in part.split() if w not in exclude_words and w != "ו"]
                 cleaned_area = " ".join(words).strip()
-                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|גם\sל|גם\sב|ל|ב)', '', cleaned_area).strip()
+                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|גם\sל|גם\sב|גם\s|ל|ב)', '', cleaned_area).strip()
                 
                 # Short generic words aren't areas usually
                 if not cleaned_area or len(cleaned_area) < 2 or len(cleaned_area.split()) > 3:
@@ -224,8 +224,8 @@ def extract_forecast_data(text):
         if not line: continue
             
         if any(skip in line.lower() for skip in [
-            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "כרגע", "לכרגע", "פרטים", "נוספים",
-            "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "מספר", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "מיקוד", "ארוך טווח"
+            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים",
+            "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "מיקוד", "ארוך טווח"
         ]):
             continue
             
@@ -242,7 +242,7 @@ def extract_forecast_data(text):
         line_clean = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line_clean)
         line_clean = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line_clean)
         line_clean = re.sub(r'צפי|משך|עוד|לאזעקה', '', line_clean)
-        line_clean = re.sub(r'[*_Ã°Å¸Å¡Â¨Ã¢Å“â€¦Ã¢Å¡Â Ã¯Â¸ÂÃ¢â€ºâ€Ã¯Â¸ÂÃ°Å¸â€˜â€¡Ã°Å¸â€œÂ\.]', '', line_clean)
+        line_clean = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line_clean)  # strip emojis
         
         line_areas = []
         for part in re.split(r'[,/|\-\n]', line_clean):
@@ -252,7 +252,7 @@ def extract_forecast_data(text):
             found_known = False
             for ka in KNOWN_AREAS:
                 # Match as a whole word (allowing Hebrew prefixes like 'ב','ל','מ','ה' dynamically)
-                if re.search(r'(?<![א-ת])(?:[בלמהמש])?' + ka + r'(?![א-ת])', part):
+                if re.search(r'(?<![א-ת])(?:[בלמה])?' + ka + r'(?![א-ת])', part):
                     if ka not in line_areas:
                         line_areas.append(ka)
                     found_known = True
@@ -601,8 +601,8 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
             # Try to inherit areas from the same channel if we have time info but no areas
             last_info = channel_last_areas.get(channel_name)
             if last_info:
-                time_diff = (msg_dt - last_info["msg_dt"]).total_seconds()
-                if time_diff <= 15 * 60: # up to 15 min channel inheritance
+                time_diff = abs((msg_dt - last_info["msg_dt"]).total_seconds())
+                if time_diff <= 20 * 60: # up to 20 min channel inheritance
                     msg_areas = last_info["areas"]
                     inherited_areas = True
                     # Apply inherited areas to alerts that lack them
@@ -711,7 +711,7 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 is_relevant = True
         else:
             r_dt = datetime.fromisoformat(info["received_at"])
-            if (cleanup_dt - r_dt).total_seconds() <= 15 * 60:
+            if (cleanup_dt - r_dt).total_seconds() <= 30 * 60:  # area-only alerts: 30 min window
                 is_relevant = True
                 
         if is_relevant:
@@ -824,49 +824,61 @@ import asyncio
 import os
 
 async def debug_load_messages():
+    """Load test data from pytest_data.json (preferred) or real_messages.json for local debug."""
+    # Choose data file: prefer pytest_data.json, then real_messages.json
+    debug_file = None
+    for candidate in ['pytest_data.json', 'real_messages.json']:
+        if os.path.exists(candidate):
+            debug_file = candidate
+            break
+    
+    if not debug_file:
+        return
+
     try:
-        if os.path.exists('real_messages.json'):
-            print("🐞 DEBUG: Loading messages from real_messages.json")
-            with open('real_messages.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            # Sort chronologically so they replay correctly
-            data.sort(key=lambda x: x["date"])
-            
-            # Group by channel
-            by_channel = {}
-            for msg in data:
-                ch = msg.get("channel", "shigurimsh")
-                if ch not in by_channel:
-                    by_channel[ch] = []
-                # Make sure msg_dt exists
-                msg["msg_dt"] = datetime.fromisoformat(msg["date"])
-                by_channel[ch].append(msg)
-                
-            # Override 12-hour cutoff by using the max date of messages as 'now'
-            # But the code inside process_forecast_messages uses datetime.now().
-            # To fix this without modifying process_forecast_messages heavily, 
-            # we can temporarily mock datetime.now() for this module!
-            
-            import server
-            original_now = server.datetime.now
-            if data:
-                latest_msg_dt = data[-1]["msg_dt"]
-                # Mock it to 5 minutes after the last message
-                mock_now = latest_msg_dt + server.timedelta(minutes=5)
-                server.datetime.now = lambda tz=None: mock_now
-                
-                print(f"🐞 DEBUG: Faked 'now' to {mock_now}")
-            
-                for ch, msgs in by_channel.items():
-                    print(f"🐞 Processing {len(msgs)} debug messages for {ch}")
-                    await server.process_forecast_messages(msgs, ch, is_init=True)
-                    
-                # Restore original
-                server.datetime.now = original_now
-                print("🐞 DEBUG: Finished loading JSON data!")
+        print(f"🐞 DEBUG: Loading messages from {debug_file}")
+        with open(debug_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Add msg_dt to each message
+        for msg in data:
+            msg["msg_dt"] = datetime.fromisoformat(msg["date"])
+        
+        # Group by channel, sorted chronologically per channel
+        by_channel = {}
+        for msg in data:
+            ch = msg.get("channel", "shigurimsh")
+            if ch not in by_channel:
+                by_channel[ch] = []
+            by_channel[ch].append(msg)
+        for msgs in by_channel.values():
+            msgs.sort(key=lambda x: x["msg_dt"])
+        
+        if not data:
+            return
+
+        original_now = datetime.now
+
+        print(f"🐞 DEBUG: Processing {len(data)} messages from {len(by_channel)} channels")
+        
+        try:
+            for ch, msgs in by_channel.items():
+                # Set mock_now to this channel's last message + 5 min
+                # so cleanup uses a time just after this channel's messages
+                ch_last_dt = msgs[-1]["msg_dt"]
+                mock_now = ch_last_dt + timedelta(minutes=5)
+                datetime.now = lambda tz=None, _t=mock_now: _t
+                print(f"🐞 Processing {len(msgs)} debug messages for channel: {ch} (mock_now={mock_now.strftime('%H:%M')})")
+                await process_forecast_messages(msgs, ch, is_init=True)
+        finally:
+            # Restore original datetime.now
+            datetime.now = original_now
+
+        print(f"🐞 DEBUG: Done! alert_history has {len(alert_history)} entries.")
     except Exception as e:
+        import traceback
         print(f"DEBUG LOAD FAILED: {e}")
+        traceback.print_exc()
 
 @app.on_event("startup")
 async def startup_event():
