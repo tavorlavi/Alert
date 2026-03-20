@@ -780,7 +780,7 @@
         }
 
         function formatTimeDiff(s) {
-            if (s < 0) return "IMPACT";
+            if (s < 0) return "SIRENS";
             return `${Math.floor(s/60).toString().padStart(2,'0')}:${Math.floor(s%60).toString().padStart(2,'0')}`;
         }
 
@@ -919,7 +919,7 @@
                 return `
                 <div class="hist-card">
                     <div class="hist-top">
-                        <div class="hist-impact mono" style="white-space:nowrap;">${iconTarget} <span dir="ltr" style="display:inline-block;">[ T-IMPACT : ${impact} ]</span></div>
+                        <div class="hist-impact mono" style="white-space:nowrap;">${iconTarget} <span dir="ltr" style="display:inline-block;">[ T-SIRENS : ${impact} ]</span></div>
                         <div class="hist-date mono" style="white-space:nowrap;">${iconClock} <span dir="ltr" style="display:inline-block;">${ts}</span></div>
                     </div>
                     <div class="hist-areas">${areas}</div>
