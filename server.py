@@ -136,7 +136,7 @@ KNOWN_AREAS = [
     "מרכז", "צפון", "דרום", "עוטף עזה", "שרון", "שפלה", "גוש דן",
     "יהודה", "הגליל", "גליל", "הגולן", "גולן", "קריות", "עמק יזרעאל",
     "ים המלח", "הערבה", "מפרץ", "בקעה", "המדבר", "גליל עליון",
-    "גליל תחתון", "גליל מערבי", "האזור", "עוטף", "מירון", "כיש"
+    "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון"
 ]
 
 def clean_hebrew_city(city_name):
@@ -179,14 +179,16 @@ def extract_areas_from_text(text):
             
             # Extract recognized predefined areas
             found_known = False
-            for ka in KNOWN_AREAS:
+            for ka in sorted(KNOWN_AREAS, key=len, reverse=True):
                 # Allow standard Hebrew prefixes on regions
-                if re.search(r'(?<![א-ת])(?:[בלמה])?' + ka + r'(?![א-ת])', part):
+                pattern = r'(?<![א-ת])(?:ו?[בלמה]?)(?:' + ka.replace(' ', r'\s+') + r')(?![א-ת])'
+                if re.search(pattern, part):
                     if ka not in seen:
                         seen.add(ka)
                         areas.append(ka)
                     found_known = True
-                    break # Stop looping once the longest match is found
+                    # Remove matched portion to allow other separate areas to match
+                    part = re.sub(pattern, ' ', part)
 
             if not found_known:
                 # Remove excluded words
@@ -250,13 +252,15 @@ def extract_forecast_data(text):
             
             # Check against KNOWN_AREAS first
             found_known = False
-            for ka in KNOWN_AREAS:
-                # Match as a whole word (allowing Hebrew prefixes like 'ב','ל','מ','ה' dynamically)
-                if re.search(r'(?<![א-ת])(?:[בלמה])?' + ka + r'(?![א-ת])', part):
+            for ka in sorted(KNOWN_AREAS, key=len, reverse=True):
+                # Match as a whole word (allowing Hebrew prefixes like 'ב','ל','מ','ה' and 'ו')
+                pattern = r'(?<![א-ת])(?:ו?[בלמה]?)(?:' + ka.replace(' ', r'\s+') + r')(?![א-ת])'
+                if re.search(pattern, part):
                     if ka not in line_areas:
                         line_areas.append(ka)
                     found_known = True
-                    break # Stop looping once the longest match is found
+                    # Blank out matched string
+                    part = re.sub(pattern, ' ', part)
                         
         if line_areas:
             alerts.append({
@@ -591,15 +595,37 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
         # deduplicate maintaining order
         msg_areas = list(dict.fromkeys(msg_areas))
 
+        msg_time_info = None
+        for a in alerts:
+            if a.get("clock_time") or a.get("expected_seconds") is not None:
+                msg_time_info = a
+                break
+
+        last_info = channel_last_areas.get(channel_name)
         inherited_areas = False
+        
         if msg_areas:
+            # Inherit TIMING if we have areas but NO timing, and previous message had timing
+            if not msg_time_info and last_info:
+                time_diff = abs((msg_dt - last_info["msg_dt"]).total_seconds())
+                if time_diff <= 15 * 60: # up to 15 min timing inheritance
+                    for a in alerts:
+                        if not a.get("clock_time") and a.get("expected_seconds") is None:
+                            a["clock_time"] = last_info.get("clock_time")
+                            a["expected_time_text"] = last_info.get("expected_time_text")
+                            a["expected_seconds"] = last_info.get("expected_seconds")
+
+            # Store the updated state
+            updated_time_info = msg_time_info if msg_time_info else alerts[0] if alerts else None
             channel_last_areas[channel_name] = {
                 "areas": msg_areas,
-                "msg_dt": msg_dt
+                "msg_dt": msg_dt,
+                "clock_time": updated_time_info.get("clock_time") if updated_time_info else None,
+                "expected_time_text": updated_time_info.get("expected_time_text") if updated_time_info else None,
+                "expected_seconds": updated_time_info.get("expected_seconds") if updated_time_info else None
             }
         else:
             # Try to inherit areas from the same channel if we have time info but no areas
-            last_info = channel_last_areas.get(channel_name)
             if last_info:
                 time_diff = abs((msg_dt - last_info["msg_dt"]).total_seconds())
                 if time_diff <= 20 * 60: # up to 20 min channel inheritance
@@ -631,13 +657,22 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
             # Update active alerts by area
             for area in a["areas"]:
                 forecast_areas_for_history.append(area)
-                # We always take the LATEST message's timing for an area
+                
+                existing = active_alerts_by_area.get(area)
+                preserve_time = not a_target_time and existing and existing.get("target_time")
+                
+                final_target_time = existing.get("target_time") if preserve_time else a_target_time
+                final_clock_time = existing.get("clock_time") if preserve_time else a.get("clock_time")
+                final_expected_time = existing.get("expected_time_text") if preserve_time else a.get("expected_time_text")
+
+                # We always take the LATEST message's timing for an area, unless it has no timing
+                # and we already have an active timing, in which case we preserve it.
                 active_alerts_by_area[area] = {
                     "text": display_text,
-                    "target_time": a_target_time,
+                    "target_time": final_target_time,
                     "received_at": msg_dt.isoformat(),
-                    "clock_time": a.get("clock_time"),
-                    "expected_time_text": a.get("expected_time_text"),
+                    "clock_time": final_clock_time,
+                    "expected_time_text": final_expected_time,
                     "source_channel": channel_name,
                     "areas": [area]
                 }
@@ -816,7 +851,7 @@ async def fetch_israel_cities():
                 for rec in records:
                     city_name = rec.get("שם_ישוב", "").strip()
                     clean_name = clean_hebrew_city(city_name)
-                    if clean_name and len(clean_name) >= 2 and clean_name not in KNOWN_AREAS:
+                    if clean_name and len(clean_name) >= 2 and clean_name not in KNOWN_AREAS and clean_name != "אזור":
                         KNOWN_AREAS.append(clean_name)
                         new_cities += 1
                         
@@ -900,11 +935,26 @@ async def startup_event():
     asyncio.create_task(telegram_polling_loop())
 
 if __name__ == "__main__":
+    import os, subprocess, sys, time
+    print(f"Checking for existing server on port {PORT}...")
+    try:
+        if os.name == 'nt':
+            output = subprocess.check_output(f"netstat -ano | findstr :{PORT}", shell=True).decode()
+            for line in output.strip().split('\n'):
+                if 'LISTENING' in line:
+                    pid = line.split()[-1]
+                    if str(pid) != str(os.getpid()) and pid != '0':
+                        print(f"Killing old server process (PID: {pid}) on port {PORT}...")
+                        subprocess.call(["taskkill", "/F", "/PID", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        time.sleep(1)
+        else:
+            subprocess.call(["fuser", "-k", f"{PORT}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
     uvicorn.run(app, host="0.0.0.0", port=PORT)
 
 import json
 from datetime import datetime
 import asyncio
 import os
-
-
