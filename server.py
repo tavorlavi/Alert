@@ -793,6 +793,14 @@ async def get_alert_history():
 async def serve_index():
     return FileResponse("index.html")
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    return FileResponse("manifest.json", media_type="application/manifest+json")
+
+@app.get("/icon.svg")
+async def serve_icon():
+    return FileResponse("icon.svg", media_type="image/svg+xml")
+
 async def fetch_israel_cities():
     """Fetch all Israeli settlements from data.gov.il dynamically on startup."""
     print("Ã°Å¸Å’Â Fetching official Israeli cities from data.gov.il...")

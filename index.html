@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AIR COMMAND // THREAT DETECTION</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.svg">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#020805">
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600;700;900&family=Heebo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -652,6 +656,28 @@
             animation: none;
         }
 
+        /* ── MOBILE SPECIFIC ── */
+        @media (max-width: 580px) {
+            .hist-top {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.6rem;
+            }
+            .hist-impact, .hist-date {
+                width: 100%;
+                justify-content: flex-start;
+            }
+            .stats-row {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .comms-bar {
+                font-size: 0.65rem;
+            }
+            .hist-pill {
+                font-size: 0.75rem;
+            }
+        }
+
     </style>
 </head>
 <body>
@@ -893,8 +919,8 @@
                 return `
                 <div class="hist-card">
                     <div class="hist-top">
-                        <div class="hist-impact mono">${iconTarget} <span>[ T-IMPACT : ${impact} ]</span></div>
-                        <div class="hist-date mono">${iconClock} <span>${ts}</span></div>
+                        <div class="hist-impact mono" style="white-space:nowrap;">${iconTarget} <span dir="ltr" style="display:inline-block;">[ T-IMPACT : ${impact} ]</span></div>
+                        <div class="hist-date mono" style="white-space:nowrap;">${iconClock} <span dir="ltr" style="display:inline-block;">${ts}</span></div>
                     </div>
                     <div class="hist-areas">${areas}</div>
                 </div>`;
