@@ -9,6 +9,8 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#020805">
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600;700;900&family=Heebo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         :root {
             --bg:       #020805;
@@ -678,6 +680,77 @@
             }
         }
 
+        /* ── SIREN MAP ───────────────────────── */
+        .map-section {
+            width: 100%;
+            border: 1px solid var(--p-border);
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+        }
+
+        #siren-map {
+            height: 350px;
+            width: 100%;
+            background: #000;
+            border-bottom: 1px solid var(--p-border);
+            position: relative;
+        }
+
+        /* Phosphor filter for the map */
+        #siren-map .leaflet-tile-pane {
+            filter: invert(1) grayscale(1) sepia(1) hue-rotate(90deg) saturate(10) brightness(0.8) contrast(1.2);
+        }
+
+        #siren-map .leaflet-container {
+            background: #000 !important;
+        }
+
+        .leaflet-control-attribution { display: none !important; }
+
+        .map-status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.45rem 0.8rem;
+            background: rgba(4,10,6,0.95);
+            font-size: 0.65rem;
+            letter-spacing: 1.5px;
+            color: var(--text-dim);
+        }
+
+        .map-status-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-weight: 700;
+            color: var(--phosphor);
+        }
+
+        .map-status-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--phosphor);
+            animation: blink 1.2s ease-in-out infinite;
+        }
+
+        /* Tactical Polygon Styling */
+        .tactical-polygon-urgent {
+            filter: drop-shadow(0 0 8px var(--red));
+            pointer-events: none;
+        }
+
+        @keyframes poly-glow {
+            0% { fill-opacity: 0.1; stroke-opacity: 0.6; }
+            50% { fill-opacity: 0.25; stroke-opacity: 1; }
+            100% { fill-opacity: 0.1; stroke-opacity: 0.6; }
+        }
+
+        .tactical-polygon-urgent path {
+            animation: poly-glow 2s infinite ease-in-out;
+        }
+
     </style>
 </head>
 <body>
@@ -713,11 +786,24 @@
             </div>
 
             <div class="status-panel" id="status-container">
-                <div class="status-state" id="status-title">סריקת מערכות תקינה</div>
-                <div class="status-meta" id="status-icon">מצב ניטור שגרתי</div>
+                <div class="status-state" id="status-title">סורק לזיהוי שיגורים</div>
+                <div class="status-meta" id="status-icon">פעיל</div>
 
                 <div id="unified-timer" class="main-timer mono" style="display:none;">--:--</div>
                 <div id="raw-text" class="raw-text hidden"></div>
+            </div>
+
+            <!-- ── SIREN MAP ── -->
+            <div class="section-divider">מפת התרעות בזמן אמת // PIKUD HAOREF</div>
+            <div class="map-section" id="map-section">
+                <div id="siren-map"></div>
+                <div class="map-status-bar">
+                    <div class="map-status-pill" id="map-status-pill">
+                        <div class="map-status-dot" id="map-dot"></div>
+                        <span id="map-status-text">מתחבר...</span>
+                    </div>
+                    <span class="mono" id="map-last-update" style="font-size:0.6rem;">--:--:--</span>
+                </div>
             </div>
         </div>
 
@@ -773,6 +859,169 @@
         const HISTORY_INTERVAL = 30000;
         let currentEventStr = null;
         let timers = [];
+
+        // ── MAP STATE ──
+        let mapData = null;
+        let sirenMap = null;
+        let sirenLayers = [];
+        let lastOrefStr = null;
+        window.urgentCities = new Set(); // To be synced from forecast data
+
+        async function loadMapData() {
+            try {
+                const resp = await fetch('/regional_coords_final.json');
+                mapData = await resp.json();
+                console.log("Geographical data loaded.");
+                document.getElementById('map-status-text').textContent = "מערכת פעילה";
+                initSirenMap();
+            } catch (e) {
+                console.error("Failed to load map data", e);
+                document.getElementById('map-status-text').textContent = "שגיאת נתונים";
+            }
+        }
+
+        function initSirenMap() {
+            if (sirenMap) return;
+            sirenMap = L.map('siren-map', {
+                center: [31.5, 34.9],
+                zoom: 7,
+                zoomControl: false,
+                attributionControl: false,
+                dragging: true,
+                scrollWheelZoom: false,
+                doubleClickZoom: false,
+                touchZoom: true
+            });
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 14 }).addTo(sirenMap);
+            
+            // Start polling Oref API via our server
+            fetchOrefAlerts();
+            setInterval(fetchOrefAlerts, 4000);
+        }
+
+        async function fetchOrefAlerts() {
+            if (!sirenMap || !mapData) return;
+            try {
+                const query = window.location.search || '';
+                const resp = await fetch('/api/oref-alerts' + query);
+                const data = await resp.json();
+                updateSirenMap(data);
+                document.getElementById('map-last-update').textContent = new Date().toLocaleTimeString('he-IL');
+            } catch (e) { console.error("Oref sync failed", e); }
+        }
+
+        function createSirenIcon(isUrgent = false) {
+            const color = isUrgent ? 'var(--red)' : 'var(--phosphor)';
+            return L.divIcon({
+                className: 'siren-marker-icon',
+                html: `<div style="position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center;">
+                    <div style="position:absolute;width:10px;height:10px;background:${color};border-radius:50%;box-shadow:0 0 10px ${color};z-index:2;animation:blink 0.8s infinite;"></div>
+                    <div style="position:absolute;width:30px;height:30px;border:1.5px solid ${color};border-radius:50%;animation:radar-ping 1.5s infinite linear;opacity:0.6;"></div>
+                </div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+        }
+
+        function updateSirenMap(orefData) {
+            // Check if anything changed in Oref data or Tactical forecasts
+            const orefStr = JSON.stringify(orefData);
+            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
+            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length > 0) {
+                 // Clear if everything expired
+                 clearSirenMarkers();
+                 setMapActive(false);
+                 return;
+            }
+            
+            lastOrefStr = orefStr;
+            clearSirenMarkers();
+            
+            const officialAreas = new Set(orefData.data || []);
+            const forecastAreas = window.urgentCities || new Set();
+            const allProcessed = new Set();
+            
+            // 1. Process Official Oref Areas (Official HFC - GREEN)
+            officialAreas.forEach(area => {
+                allProcessed.add(area);
+                addMapMarker(area, false);
+            });
+            // 2. Process Tactical Forecast Areas (Tactical/Non-Oref - RED)
+            forecastAreas.forEach(area => {
+                if (allProcessed.has(area)) return;
+                
+                let overlap = false;
+                officialAreas.forEach(oa => {
+                   if (oa.includes(area) || area.includes(oa)) overlap = true;
+                });
+                
+                if (!overlap) {
+                    addMapMarker(area, true);
+                    allProcessed.add(area);
+                }
+            });
+            
+            setMapActive(allProcessed.size > 0);
+        }
+
+        function setMapActive(active) {
+            const sec = document.getElementById('map-section');
+            const dot = document.getElementById('map-dot');
+            if (active) {
+                sec.classList.add('siren-active');
+                dot.classList.add('active');
+            } else {
+                sec.classList.remove('siren-active');
+                dot.classList.remove('active');
+            }
+        }
+
+        function getRegionID(name) {
+            if (!mapData || !mapData.CITY_TO_REGION) return null;
+            for (const [id, list] of Object.entries(mapData.CITY_TO_REGION)) {
+                // Check if the name or any city in the region matches
+                if (list.some(c => name.includes(c) || c.includes(name))) return id;
+            }
+            return null;
+        }
+
+        function addMapMarker(name, isUrgent) {
+            if (!mapData) return;
+            
+            // Region polygon lookup first
+            const regionID = getRegionID(name);
+            const hasPolygon = regionID && mapData.REGION_POLYGONS[regionID];
+            
+            if (hasPolygon) {
+                const polyData = mapData.REGION_POLYGONS[regionID];
+                const poly = L.polygon(polyData, {
+                    color: isUrgent ? 'var(--red)' : 'var(--phosphor)',
+                    weight: 2,
+                    fillOpacity: 0.15,
+                    className: isUrgent ? 'tactical-polygon-urgent' : ''
+                }).addTo(sirenMap);
+                sirenLayers.push(poly);
+                
+                // If it's a big tactical area (isUrgent=true after swap), don't add the marker
+                if (isUrgent) return;
+            }
+
+            let coords = mapData.CITY_COORDS[name] || mapData.REGION_COORDS[name];
+            if (!coords) {
+                const stripped = name.replace(/^(צפון|דרום|מרכז|מזרח|מערב|אזור)\s*-?\s*/, '').trim();
+                coords = mapData.CITY_COORDS[stripped];
+            }
+            
+            if (coords) {
+                const marker = L.marker(coords, { icon: createSirenIcon(isUrgent) }).addTo(sirenMap);
+                sirenLayers.push(marker);
+            }
+        }
+
+        function clearSirenMarkers() {
+            sirenLayers.forEach(l => sirenMap.removeLayer(l));
+            sirenLayers = [];
+        }
 
         function clearTimers() {
             timers.forEach(t => clearInterval(t.interval));
@@ -835,11 +1084,13 @@
             document.getElementById('raw-text').classList.add('hidden');
             document.getElementById('sub-alerts-wrapper').classList.add('hidden');
             clearTimers();
+            window.urgentCities.clear();
         }
 
         async function fetchLatest() {
             try {
-                const data = await (await fetch('/api/latest')).json();
+                const query = window.location.search || '';
+                const data = await (await fetch('/api/latest' + query)).json();
                 setComms(true);
                 renderData(data);
             } catch { setComms(false); }
@@ -849,7 +1100,7 @@
             try {
                 const h = await (await fetch('/api/history')).json();
                 renderHistory(h);
-            } catch(e) { console.error(e); }
+            } catch(e) { console.error(h); }
         }
 
         function renderHistory(history) {
@@ -932,6 +1183,7 @@
             if (str === currentEventStr) return;
             currentEventStr = str;
             clearTimers();
+            window.urgentCities.clear();
 
             if (!data.has_data) { setSafe(); return; }
 
@@ -944,8 +1196,8 @@
             // THREAT STATE
             document.getElementById('status-container').classList.add('threat-active');
             document.getElementById('main-panel').classList.add('alert-active-mode');
-            document.getElementById('status-title').textContent = 'התרעת שיגור פעילה';
-            document.getElementById('status-icon').textContent = '[!] סכנה ממשית [!]';
+            document.getElementById('status-title').textContent = 'זוהה שיגור!';
+            document.getElementById('status-icon').textContent = '[!] התכוננו להתמגן [!]';
 
             const raw = document.getElementById('raw-text');
             raw.classList.remove('hidden');
@@ -961,6 +1213,9 @@
                 wrapper.classList.remove('hidden');
                 data.alerts.forEach((alert, i) => {
                     if (!alert.areas || !alert.areas.length) return;
+                    
+                    // Add areas to tactical set for map sync
+                    alert.areas.forEach(area => window.urgentCities.add(area));
 
                     const card = document.createElement('div');
                     card.className = 'sub-alert-card';
@@ -996,6 +1251,7 @@
             }
         }
 
+        loadMapData();
         fetchLatest();
         fetchHistory();
         setInterval(fetchLatest, POLL_INTERVAL);

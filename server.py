@@ -69,6 +69,7 @@ latest_event = {
 
 channel_last_areas = {}      # Track last areas mentioned by channel to group updates
 active_alerts_by_area = {}   # Track current active alerts per individual area
+active_oref_alerts = []      # Track official Pikud Haoref alerts
 
 # Store alert history (last 50 alerts)
 alert_history = []
@@ -774,7 +775,7 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 grouped_alerts.append(new_group)
                 
         latest_event = {
-            "text": "מערכת התרעות מאוחדת פעילה",
+            "text": "מערכת התרעות פעילה",
             "target_time": grouped_alerts[0].get("target_time") if grouped_alerts else None,
             "received_at": max([a["received_at"] for a in current_alerts_array]),
             "areas": [], # Handled by subAlertsContainer
@@ -817,12 +818,45 @@ async def telegram_polling_loop():
                 print(f"Ã¢Å¡Â Ã¯Â¸Â Error polling {ch_name}: {e}")
 
 @app.get("/api/latest")
-async def get_latest_event():
+async def get_latest_event(mock: bool = False, tactical: str = None):
+    if mock and tactical:
+        return {
+            "has_data": True,
+            "text": f"התרעת ניסוי (Tactical): {tactical}",
+            "received_at": datetime.now(local_tz).isoformat(),
+            "target_time": (datetime.now(local_tz) + timedelta(minutes=1)).isoformat(),
+            "alerts": [{
+                "areas": [tactical],
+                "target_time": (datetime.now(local_tz) + timedelta(minutes=1)).isoformat()
+            }]
+        }
     return latest_event
 
 @app.get("/api/history")
 async def get_alert_history():
     return alert_history
+
+@app.get("/api/oref-alerts")
+async def get_oref_alerts(mock: bool = False, oref: str = None):
+    if mock and oref:
+        return {
+            "data": [oref],
+            "title": "התרעת ניסוי (Oref)"
+        }
+    global active_oref_alerts
+    now = datetime.now(local_tz)
+    # Filter out alerts older than 5 minutes (300s)
+    active_oref_alerts = [a for a in active_oref_alerts if (now - a["msg_dt"]).total_seconds() <= 300]
+    
+    all_areas = []
+    for a in active_oref_alerts:
+        all_areas.extend(a["areas"])
+    all_areas = list(dict.fromkeys(all_areas))
+    
+    return {
+        "data": all_areas,
+        "title": "ירי רקטות וטילים" if all_areas else ""
+    }
 
 @app.get("/")
 async def serve_index():
@@ -835,6 +869,10 @@ async def serve_manifest():
 @app.get("/icon.svg")
 async def serve_icon():
     return FileResponse("icon.svg", media_type="image/svg+xml")
+
+@app.get("/regional_coords_final.json")
+async def serve_regional_coords():
+    return FileResponse("regional_coords_final.json", media_type="application/json")
 
 async def fetch_israel_cities():
     """Fetch all Israeli settlements from data.gov.il dynamically on startup."""
@@ -933,6 +971,51 @@ async def startup_event():
     
     # Start Telegram channel scraping (no auth needed)
     asyncio.create_task(telegram_polling_loop())
+    
+    # Start Oref polling loop
+    asyncio.create_task(oref_polling_loop())
+
+async def oref_polling_loop():
+    global active_oref_alerts
+    print("📡 Starting Pikud Haoref polling loop...")
+    # Public history API (gets latest alerts)
+    oref_url = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
+    headers = {
+        "Referer": "https://www.oref.org.il/",
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    }
+    async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        while True:
+            try:
+                resp = await client.get(oref_url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    now = datetime.now(local_tz)
+                    for alert in data:
+                        # alertDate is like "2024-03-21 03:30:00"
+                        try:
+                            alert_dt = datetime.strptime(alert["alertDate"], "%Y-%m-%d %H:%M:%S")
+                            alert_dt = alert_dt.replace(tzinfo=local_tz)
+                            if (now - alert_dt).total_seconds() <= 300:
+                                # Filter only for Rocket alerts (category 1)
+                                if alert.get("category") != 1:
+                                    continue
+                                
+                                areas = [a.strip() for a in alert["data"].split(',')]
+                                rid = alert.get("rid") or f"{alert['alertDate']}-{alert['data']}"
+                                if not any(a["id"] == rid for a in active_oref_alerts):
+                                    active_oref_alerts.append({
+                                        "id": rid,
+                                        "areas": areas,
+                                        "msg_dt": alert_dt
+                                    })
+                        except Exception:
+                            continue
+            except Exception as e:
+                # Silently catch common connection errors to avoid spamming logs
+                pass
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     import os, subprocess, sys, time
