@@ -537,7 +537,7 @@ async def scrape_telegram_channel(channel_name, channel_config, max_pages=1, cut
                     await asyncio.sleep(0.3)
             
             if max_pages > 1:
-                print(f"   Ã°Å¸â€œâ€ž {channel_name}: scraped {page + 1} pages, {len(all_results)} messages" + (" (reached 12h cutoff)" if reached_cutoff else ""))
+                print(f"   Ã°Å¸â€œâ€ž {channel_name}: scraped {page + 1} pages, {len(all_results)} messages" + (" (reached 2h cutoff)" if reached_cutoff else ""))
             
             return all_results
         except Exception as e:
@@ -551,7 +551,7 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
     global channel_last_areas, active_alerts_by_area
 
     now = datetime.now(local_tz)
-    cutoff = now - timedelta(hours=12)
+    cutoff = now - timedelta(hours=24)
 
     new_msgs = []
     for msg in messages:
@@ -699,26 +699,56 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
         
         if forecast_areas_for_history or text:
             merged_in_history = False
-            for h in alert_history[:10]:
+            for h in alert_history:
                 h_dt = datetime.fromisoformat(h["received_at"])
                 time_diff_sec = abs((msg_dt - h_dt).total_seconds())
 
-                if time_diff_sec <= 5 * 60:
-                    h_areas_set = set(h.get("areas", []))
-                    f_areas_set = set(forecast_areas_for_history)
-                    
+                is_close = time_diff_sec <= 6 * 60  # Allow some padding if checking received_at
+                
+                h_tt_str = h.get("target_time")
+                f_tt_str = alerts[0].get("target_time") if alerts else None
+                if h_tt_str and f_tt_str:
+                    try:
+                        h_tt = datetime.fromisoformat(h_tt_str)
+                        f_tt = datetime.fromisoformat(f_tt_str)
+                        
+                        h_sec = h_tt.hour * 3600 + h_tt.minute * 60 + h_tt.second
+                        f_sec = f_tt.hour * 3600 + f_tt.minute * 60 + f_tt.second
+                        diff = abs(f_sec - h_sec)
+                        if diff > 12 * 3600:  # handle midnight wrap-around
+                            diff = 24 * 3600 - diff
+                            
+                        if diff <= 5 * 60:
+                            is_close = True
+                        else:
+                            is_close = False
+                    except Exception:
+                        pass
+                elif h_tt_str or f_tt_str:
+                    # If one has target time and the other doesn't, but they are within 15 min received_at, merge them
+                    if time_diff_sec <= 15 * 60:
+                        is_close = True
+                        
+                h_areas_set = set(h.get("areas", []))
+                f_areas_set = set(forecast_areas_for_history)
+                
+                if is_close:
                     if not f_areas_set and h_areas_set:
                         h["received_at"] = max(h_dt, msg_dt).isoformat()
                         merged_in_history = True
-                        break
                     elif f_areas_set and not h_areas_set:
                         h["areas"] = list(f_areas_set)
                         h["received_at"] = max(h_dt, msg_dt).isoformat()
                         merged_in_history = True
-                        break
                     elif f_areas_set == h_areas_set and f_areas_set:
                         h["received_at"] = max(h_dt, msg_dt).isoformat()
                         merged_in_history = True
+                        
+                    if merged_in_history:
+                        if alerts and (alerts[0].get("expected_time_text") or alerts[0].get("target_time")):
+                            h["expected_time_text"] = alerts[0].get("expected_time_text")
+                            h["target_time"] = alerts[0].get("target_time")
+                            h["text"] = display_text
                         break
 
             if not merged_in_history and forecast_areas_for_history:
@@ -793,12 +823,12 @@ async def telegram_polling_loop():
     """Background task: poll Telegram channels via web scraping."""
     print("Ã°Å¸â€œÂ± Starting Telegram channel scraping (no auth needed)...")
     
-    # Initial fetch for all channels Ã¢â‚¬â€ load up to 250 pages (~5000 messages) or 12h of history
+    # Initial fetch for all channels Ã¢â‚¬â€ load up to 250 pages (~5000 messages) or 2h of history
     INIT_PAGES = 250
-    cutoff_12h = datetime.now(local_tz) - timedelta(hours=12)
+    cutoff_2h = datetime.now(local_tz) - timedelta(hours=2)
     for ch_name, ch_config in TELEGRAM_CHANNELS.items():
         try:
-            messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES, cutoff_dt=cutoff_12h)
+            messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=INIT_PAGES, cutoff_dt=cutoff_2h)
             if messages:
                 await process_forecast_messages(messages, ch_name, is_init=True)
                 telegram_initialized[ch_name] = True
@@ -943,17 +973,21 @@ async def debug_load_messages():
         print(f"🐞 DEBUG: Processing {len(data)} messages from {len(by_channel)} channels")
         
         try:
+            from unittest.mock import patch
             for ch, msgs in by_channel.items():
-                # Set mock_now to this channel's last message + 5 min
-                # so cleanup uses a time just after this channel's messages
                 ch_last_dt = msgs[-1]["msg_dt"]
                 mock_now = ch_last_dt + timedelta(minutes=5)
-                datetime.now = lambda tz=None, _t=mock_now: _t
                 print(f"🐞 Processing {len(msgs)} debug messages for channel: {ch} (mock_now={mock_now.strftime('%H:%M')})")
-                await process_forecast_messages(msgs, ch, is_init=True)
+                
+                class MockDatetime(datetime):
+                    @classmethod
+                    def now(cls, tz=None):
+                        return mock_now
+                        
+                with patch('server.datetime', MockDatetime):
+                    await process_forecast_messages(msgs, ch, is_init=True)
         finally:
-            # Restore original datetime.now
-            datetime.now = original_now
+            pass
 
         print(f"🐞 DEBUG: Done! alert_history has {len(alert_history)} entries.")
     except Exception as e:

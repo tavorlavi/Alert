@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -8,31 +9,40 @@
     <link rel="apple-touch-icon" href="/icon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#020805">
-    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600;700;900&family=Heebo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600;700;900&family=Heebo:wght@400;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         :root {
-            --bg:       #020805;
-            --bg2:      #040a06;
+            --bg: #020805;
+            --bg2: #040a06;
             --phosphor: #39ff14;
-            --p-dim:    rgba(57,255,20,0.55);
-            --p-faint:  rgba(57,255,20,0.12);
-            --p-glow:   rgba(57,255,20,0.45);
-            --p-border: rgba(57,255,20,0.25);
-            --amber:    #ffaa00;
-            --a-dim:    rgba(255,170,0,0.18);
-            --a-glow:   rgba(255,170,0,0.5);
-            --red:      #ff2233;
-            --r-dim:    rgba(255,34,51,0.15);
-            --r-glow:   rgba(255,34,51,0.6);
-            --text:     #7ab87a;
+            --p-dim: rgba(57, 255, 20, 0.55);
+            --p-faint: rgba(57, 255, 20, 0.12);
+            --p-glow: rgba(57, 255, 20, 0.45);
+            --p-border: rgba(57, 255, 20, 0.25);
+            --amber: #ffaa00;
+            --a-dim: rgba(255, 170, 0, 0.18);
+            --a-glow: rgba(255, 170, 0, 0.5);
+            --red: #ff2233;
+            --r-dim: rgba(255, 34, 51, 0.15);
+            --r-glow: rgba(255, 34, 51, 0.6);
+            --text: #7ab87a;
             --text-dim: #356b35;
-            --scanline: rgba(0,0,0,0.22);
+            --scanline: rgba(0, 0, 0, 0.22);
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html { scroll-behavior: smooth; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
 
         body {
             background: var(--bg);
@@ -46,21 +56,24 @@
         }
 
         /* Mono for numbers and english only */
-        .mono { font-family: 'Share Tech Mono', monospace; }
-        .orbitron { font-family: 'Orbitron', sans-serif; }
+        .mono {
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .orbitron {
+            font-family: 'Orbitron', sans-serif;
+        }
 
         /* CRT scan-line overlay */
         body::after {
             content: '';
             position: fixed;
             inset: 0;
-            background: repeating-linear-gradient(
-                to bottom,
-                var(--scanline) 0px,
-                var(--scanline) 1px,
-                transparent 1px,
-                transparent 3px
-            );
+            background: repeating-linear-gradient(to bottom,
+                    var(--scanline) 0px,
+                    var(--scanline) 1px,
+                    transparent 1px,
+                    transparent 3px);
             pointer-events: none;
             z-index: 9999;
             opacity: 0.35;
@@ -72,7 +85,7 @@
             position: fixed;
             inset: 0;
             background:
-                radial-gradient(ellipse 80% 60% at 50% 30%, rgba(57,255,20,0.04) 0%, transparent 70%);
+                radial-gradient(ellipse 80% 60% at 50% 30%, rgba(57, 255, 20, 0.04) 0%, transparent 70%);
             pointer-events: none;
             z-index: 0;
         }
@@ -96,7 +109,7 @@
             position: sticky;
             top: 0;
             z-index: 200;
-            background: rgba(2,8,5,0.95);
+            background: rgba(2, 8, 5, 0.95);
             border-bottom: 1px solid var(--p-border);
             padding: 0 1rem;
             height: 60px;
@@ -159,7 +172,8 @@
 
         .hdr-status-dot::before {
             content: '';
-            width: 8px; height: 8px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: var(--phosphor);
             box-shadow: 0 0 8px var(--p-glow);
@@ -167,8 +181,15 @@
         }
 
         @keyframes blink {
-            0%,100% { opacity: 1; }
-            50%      { opacity: 0.2; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.2;
+            }
         }
 
         /* ── PAGE ───────────────────────────────────── */
@@ -194,23 +215,26 @@
         /* RADAR SCOPE */
         .radar-scope {
             background: radial-gradient(circle at center,
-                rgba(57,255,20,0.08) 0%,
-                rgba(57,255,20,0.03) 40%,
-                rgba(0,0,0,0.6) 100%);
+                    rgba(57, 255, 20, 0.08) 0%,
+                    rgba(57, 255, 20, 0.03) 40%,
+                    rgba(0, 0, 0, 0.6) 100%);
             border: 1px solid var(--p-border);
             border-radius: 50%;
-            width: 180px; height: 180px;
+            width: 180px;
+            height: 180px;
             position: relative;
             box-shadow:
-                0 0 0 1px rgba(57,255,20,0.1),
-                0 0 30px rgba(57,255,20,0.08),
-                inset 0 0 30px rgba(57,255,20,0.05);
+                0 0 0 1px rgba(57, 255, 20, 0.1),
+                0 0 30px rgba(57, 255, 20, 0.08),
+                inset 0 0 30px rgba(57, 255, 20, 0.05);
             flex-shrink: 0;
             overflow: hidden;
         }
 
         .radar-scope::before {
-            content: ''; position: absolute; inset: 0;
+            content: '';
+            position: absolute;
+            inset: 0;
             background:
                 radial-gradient(circle at center, transparent 24%, var(--p-border) 25%, transparent 26%),
                 radial-gradient(circle at center, transparent 49%, var(--p-border) 50%, transparent 51%),
@@ -219,69 +243,139 @@
         }
 
         .radar-scope::after {
-            content: ''; position: absolute; inset: 0;
+            content: '';
+            position: absolute;
+            inset: 0;
             background:
-                linear-gradient(to bottom, transparent 49.5%, rgba(57,255,20,0.2) 50%, transparent 50.5%),
-                linear-gradient(to right,  transparent 49.5%, rgba(57,255,20,0.2) 50%, transparent 50.5%);
+                linear-gradient(to bottom, transparent 49.5%, rgba(57, 255, 20, 0.2) 50%, transparent 50.5%),
+                linear-gradient(to right, transparent 49.5%, rgba(57, 255, 20, 0.2) 50%, transparent 50.5%);
             border-radius: 50%;
         }
 
         .radar-sweep {
-            position: absolute; top: 50%; left: 50%;
-            width: 50%; height: 1px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50%;
+            height: 1px;
             transform-origin: 0% 50%;
             animation: sweep 4s linear infinite;
         }
 
         .radar-sweep::before {
-            content: ''; position: absolute; top: -60px; left: 0;
-            width: 100%; height: 120px;
+            content: '';
+            position: absolute;
+            top: -60px;
+            left: 0;
+            width: 100%;
+            height: 120px;
             background: conic-gradient(from -90deg at 0% 50%,
-                rgba(57,255,20,0.5) 0deg,
-                rgba(57,255,20,0.15) 30deg,
-                transparent 60deg);
+                    rgba(57, 255, 20, 0.5) 0deg,
+                    rgba(57, 255, 20, 0.15) 30deg,
+                    transparent 60deg);
             transform-origin: 0% 50%;
         }
 
         .radar-sweep::after {
-            content: ''; position: absolute; right: 0; top: -1px;
-            width: 4px; height: 3px; border-radius: 50%;
+            content: '';
+            position: absolute;
+            right: 0;
+            top: -1px;
+            width: 4px;
+            height: 3px;
+            border-radius: 50%;
             background: var(--phosphor);
             box-shadow: 0 0 6px var(--phosphor), 0 0 12px var(--p-glow);
         }
 
-        @keyframes sweep { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes sweep {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
 
         .radar-blip {
-            position: absolute; width: 8px; height: 8px; border-radius: 50%;
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
             background: var(--red);
             box-shadow: 0 0 10px var(--red), 0 0 20px var(--r-glow);
-            opacity: 0; top: 28%; left: 60%;
+            opacity: 0;
+            top: 28%;
+            left: 60%;
             transition: opacity 0.5s ease;
             animation: blip-pulse 1s ease-in-out infinite;
         }
 
-        .radar-blip:nth-child(2) { top: 55%; left: 30%; animation-delay: 0.3s; }
-        .radar-blip:nth-child(3) { top: 70%; left: 65%; animation-delay: 0.6s; }
+        .radar-blip:nth-child(2) {
+            top: 55%;
+            left: 30%;
+            animation-delay: 0.3s;
+        }
+
+        .radar-blip:nth-child(3) {
+            top: 70%;
+            left: 65%;
+            animation-delay: 0.6s;
+        }
 
         @keyframes blip-pulse {
-            0%,100% { box-shadow: 0 0 6px var(--red), 0 0 14px var(--r-glow); transform: scale(1); }
-            50%      { box-shadow: 0 0 14px var(--red), 0 0 28px var(--r-glow); transform: scale(1.4); }
+
+            0%,
+            100% {
+                box-shadow: 0 0 6px var(--red), 0 0 14px var(--r-glow);
+                transform: scale(1);
+            }
+
+            50% {
+                box-shadow: 0 0 14px var(--red), 0 0 28px var(--r-glow);
+                transform: scale(1.4);
+            }
         }
 
-        .alert-active-mode .radar-blip { opacity: 1; }
+        .alert-active-mode .radar-blip {
+            opacity: 1;
+        }
 
         .radar-label {
-            position: absolute; font-size: 0.55rem; color: var(--p-dim); letter-spacing: 1px;
+            position: absolute;
+            font-size: 0.55rem;
+            color: var(--p-dim);
+            letter-spacing: 1px;
         }
-        .radar-label.n { top: 4px; left: 50%; transform: translateX(-50%); }
-        .radar-label.e { top: 50%; right: 4px; transform: translateY(-50%); }
-        .radar-label.s { bottom: 4px; left: 50%; transform: translateX(-50%); }
-        .radar-label.w { top: 50%; left: 4px; transform: translateY(-50%); }
+
+        .radar-label.n {
+            top: 4px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .radar-label.e {
+            top: 50%;
+            right: 4px;
+            transform: translateY(-50%);
+        }
+
+        .radar-label.s {
+            bottom: 4px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .radar-label.w {
+            top: 50%;
+            left: 4px;
+            transform: translateY(-50%);
+        }
 
         /* STATUS PANEL */
         .status-panel {
-            background: rgba(4,10,6,0.9);
+            background: rgba(4, 10, 6, 0.9);
             border: 1px solid var(--p-border);
             border-radius: 6px;
             padding: 1.5rem;
@@ -295,7 +389,8 @@
         .status-panel::before {
             content: '[ SYSTEM STATE ]';
             position: absolute;
-            top: -1px; left: 1rem;
+            top: -1px;
+            left: 1rem;
             font-size: 0.65rem;
             letter-spacing: 2px;
             color: var(--bg);
@@ -306,13 +401,18 @@
 
         .status-panel.threat-active {
             border-color: var(--red);
-            box-shadow: 0 0 30px rgba(255,34,51,0.2), inset 0 0 25px rgba(255,34,51,0.08);
+            box-shadow: 0 0 30px rgba(255, 34, 51, 0.2), inset 0 0 25px rgba(255, 34, 51, 0.08);
             animation: threat-flash 1.2s ease-in-out infinite alternate;
         }
 
         @keyframes threat-flash {
-            from { box-shadow: 0 0 15px rgba(255,34,51,0.15), inset 0 0 10px rgba(255,34,51,0.05); }
-            to   { box-shadow: 0 0 40px rgba(255,34,51,0.35), inset 0 0 30px rgba(255,34,51,0.15); }
+            from {
+                box-shadow: 0 0 15px rgba(255, 34, 51, 0.15), inset 0 0 10px rgba(255, 34, 51, 0.05);
+            }
+
+            to {
+                box-shadow: 0 0 40px rgba(255, 34, 51, 0.35), inset 0 0 30px rgba(255, 34, 51, 0.15);
+            }
         }
 
         .status-panel.threat-active::before {
@@ -321,7 +421,17 @@
             animation: label-blink 0.7s steps(1) infinite;
         }
 
-        @keyframes label-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+        @keyframes label-blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
 
         .status-state {
             font-size: 1.8rem;
@@ -340,9 +450,20 @@
         }
 
         @keyframes text-flicker {
-            0%,94%,100% { opacity: 1; }
-            95%          { opacity: 0.85; }
-            97%          { opacity: 0.9; }
+
+            0%,
+            94%,
+            100% {
+                opacity: 1;
+            }
+
+            95% {
+                opacity: 0.85;
+            }
+
+            97% {
+                opacity: 0.9;
+            }
         }
 
         .status-meta {
@@ -370,7 +491,7 @@
         .raw-text {
             font-size: 0.9rem;
             line-height: 1.6;
-            background: rgba(0,0,0,0.6);
+            background: rgba(0, 0, 0, 0.6);
             padding: 1rem;
             border-right: 3px solid var(--p-border);
             color: var(--text);
@@ -394,8 +515,8 @@
         }
 
         .sub-alert-card {
-            background: linear-gradient(90deg, rgba(255,34,51,0.12), rgba(255,34,51,0.04));
-            border: 1px solid rgba(255,34,51,0.3);
+            background: linear-gradient(90deg, rgba(255, 34, 51, 0.12), rgba(255, 34, 51, 0.04));
+            border: 1px solid rgba(255, 34, 51, 0.3);
             border-radius: 6px;
             padding: 1rem 1.2rem;
             display: flex;
@@ -410,25 +531,38 @@
         .sub-alert-card::before {
             content: attr(data-index);
             position: absolute;
-            top: 0.35rem; left: 0.6rem;
+            top: 0.35rem;
+            left: 0.6rem;
             font-size: 0.55rem;
-            color: rgba(255,34,51,0.5);
+            color: rgba(255, 34, 51, 0.5);
             letter-spacing: 1px;
         }
 
         .sub-alert-card::after {
-            content: ''; position: absolute; right: 0; top: 0; bottom: 0;
-            width: 4px; background: linear-gradient(to bottom, var(--red), transparent);
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: linear-gradient(to bottom, var(--red), transparent);
         }
 
         @keyframes slideIn {
-            from { opacity: 0; transform: translateX(12px); }
-            to   { opacity: 1; transform: translateX(0); }
+            from {
+                opacity: 0;
+                transform: translateX(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
         .vec-designator {
             font-size: 0.65rem;
-            color: rgba(255,34,51,0.6);
+            color: rgba(255, 34, 51, 0.6);
             letter-spacing: 1px;
             margin-bottom: 0.3rem;
             font-weight: 700;
@@ -476,7 +610,9 @@
 
         .section-divider::before,
         .section-divider::after {
-            content: ''; flex: 1; height: 1px;
+            content: '';
+            flex: 1;
+            height: 1px;
             background: linear-gradient(to left, var(--p-border), transparent);
         }
 
@@ -493,7 +629,7 @@
         }
 
         .stat-box {
-            background: rgba(4,10,6,0.8);
+            background: rgba(4, 10, 6, 0.8);
             border: 1px solid var(--p-border);
             border-radius: 4px;
             padding: 0.75rem 0.5rem;
@@ -526,15 +662,26 @@
             width: 100%;
             max-height: 400px;
             overflow-y: auto;
-            padding-left: 6px; /* Space for scrollbar */
+            padding-left: 6px;
+            /* Space for scrollbar */
         }
 
-        .hist-list::-webkit-scrollbar { width: 4px; }
-        .hist-list::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
-        .hist-list::-webkit-scrollbar-thumb { background: var(--p-border); border-radius: 4px; }
+        .hist-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .hist-list::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+
+        .hist-list::-webkit-scrollbar-thumb {
+            background: var(--p-border);
+            border-radius: 4px;
+        }
 
         .hist-card {
-            background: linear-gradient(90deg, rgba(4,10,6,0.95), rgba(4,10,6,0.7));
+            background: linear-gradient(90deg, rgba(4, 10, 6, 0.95), rgba(4, 10, 6, 0.7));
             border: 1px solid var(--p-border);
             border-right: 4px solid var(--phosphor);
             border-radius: 4px;
@@ -547,15 +694,15 @@
         }
 
         .hist-card:hover {
-            background: linear-gradient(90deg, rgba(57,255,20,0.08), rgba(4,10,6,0.8));
-            border-color: rgba(57,255,20,0.4);
+            background: linear-gradient(90deg, rgba(57, 255, 20, 0.08), rgba(4, 10, 6, 0.8));
+            border-color: rgba(57, 255, 20, 0.4);
         }
 
         .hist-top {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px dashed rgba(57,255,20,0.15);
+            border-bottom: 1px dashed rgba(57, 255, 20, 0.15);
             padding-bottom: 0.5rem;
         }
 
@@ -565,12 +712,12 @@
             gap: 0.5rem;
             font-size: 0.85rem;
             color: var(--red);
-            background: rgba(255,34,51,0.08);
-            border: 1px solid rgba(255,34,51,0.25);
+            background: rgba(255, 34, 51, 0.08);
+            border: 1px solid rgba(255, 34, 51, 0.25);
             padding: 0.15rem 0.6rem;
             border-radius: 3px;
             font-weight: 700;
-            box-shadow: 0 0 10px rgba(255,34,51,0.1);
+            box-shadow: 0 0 10px rgba(255, 34, 51, 0.1);
         }
 
         .hist-date {
@@ -593,13 +740,13 @@
             display: flex;
             align-items: center;
             gap: 0.3rem;
-            background: rgba(57,255,20,0.05);
+            background: rgba(57, 255, 20, 0.05);
             color: var(--phosphor);
             padding: 0.15rem 0.5rem;
             border-radius: 2px;
             font-size: 0.85rem;
             font-weight: 600;
-            border: 1px solid rgba(57,255,20,0.2);
+            border: 1px solid rgba(57, 255, 20, 0.2);
             text-shadow: 0 0 5px var(--p-glow);
         }
 
@@ -608,7 +755,7 @@
             height: 14px;
             fill: currentColor;
         }
-        
+
         .hist-empty {
             text-align: center;
             padding: 2rem;
@@ -624,7 +771,7 @@
             align-items: center;
             gap: 0.75rem;
             padding: 0.6rem 1rem;
-            background: rgba(4,10,6,0.85);
+            background: rgba(4, 10, 6, 0.85);
             border: 1px solid var(--p-border);
             border-radius: 4px;
             font-size: 0.75rem;
@@ -638,7 +785,8 @@
 
         .comms-bar::before {
             content: '';
-            width: 7px; height: 7px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
             background: var(--phosphor);
             box-shadow: 0 0 8px var(--p-glow);
@@ -648,7 +796,7 @@
 
         .comms-bar.signal-lost {
             color: var(--red);
-            border-color: rgba(255,34,51,0.35);
+            border-color: rgba(255, 34, 51, 0.35);
             text-shadow: 0 0 6px var(--r-glow);
         }
 
@@ -665,16 +813,21 @@
                 align-items: flex-start;
                 gap: 0.6rem;
             }
-            .hist-impact, .hist-date {
+
+            .hist-impact,
+            .hist-date {
                 width: 100%;
                 justify-content: flex-start;
             }
+
             .stats-row {
                 grid-template-columns: repeat(2, 1fr);
             }
+
             .comms-bar {
                 font-size: 0.65rem;
             }
+
             .hist-pill {
                 font-size: 0.75rem;
             }
@@ -707,14 +860,16 @@
             background: #000 !important;
         }
 
-        .leaflet-control-attribution { display: none !important; }
+        .leaflet-control-attribution {
+            display: none !important;
+        }
 
         .map-status-bar {
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 0.45rem 0.8rem;
-            background: rgba(4,10,6,0.95);
+            background: rgba(4, 10, 6, 0.95);
             font-size: 0.65rem;
             letter-spacing: 1.5px;
             color: var(--text-dim);
@@ -729,7 +884,8 @@
         }
 
         .map-status-dot {
-            width: 7px; height: 7px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
             background: var(--phosphor);
             animation: blink 1.2s ease-in-out infinite;
@@ -742,17 +898,28 @@
         }
 
         @keyframes poly-glow {
-            0% { fill-opacity: 0.1; stroke-opacity: 0.6; }
-            50% { fill-opacity: 0.25; stroke-opacity: 1; }
-            100% { fill-opacity: 0.1; stroke-opacity: 0.6; }
+            0% {
+                fill-opacity: 0.1;
+                stroke-opacity: 0.6;
+            }
+
+            50% {
+                fill-opacity: 0.25;
+                stroke-opacity: 1;
+            }
+
+            100% {
+                fill-opacity: 0.1;
+                stroke-opacity: 0.6;
+            }
         }
 
         .tactical-polygon-urgent path {
             animation: poly-glow 2s infinite ease-in-out;
         }
-
     </style>
 </head>
+
 <body>
 
     <div class="class-banner orbitron">[*] TOP SECRET // AIR COMMAND // THREAT DETECTION [*]</div>
@@ -850,12 +1017,12 @@
         function tickClock() {
             const now = new Date();
             document.getElementById('hdr-clock').textContent =
-                now.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+                now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         }
         tickClock();
         setInterval(tickClock, 1000);
 
-        const POLL_INTERVAL    = 3000;
+        const POLL_INTERVAL = 3000;
         const HISTORY_INTERVAL = 30000;
         let currentEventStr = null;
         let timers = [];
@@ -893,7 +1060,7 @@
                 touchZoom: true
             });
             L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 14 }).addTo(sirenMap);
-            
+
             // Start polling Oref API via our server
             fetchOrefAlerts();
             setInterval(fetchOrefAlerts, 4000);
@@ -928,19 +1095,19 @@
             const orefStr = JSON.stringify(orefData);
             if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
             if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length > 0) {
-                 // Clear if everything expired
-                 clearSirenMarkers();
-                 setMapActive(false);
-                 return;
+                // Clear if everything expired
+                clearSirenMarkers();
+                setMapActive(false);
+                return;
             }
-            
+
             lastOrefStr = orefStr;
             clearSirenMarkers();
-            
+
             const officialAreas = new Set(orefData.data || []);
             const forecastAreas = window.urgentCities || new Set();
             const allProcessed = new Set();
-            
+
             // 1. Process Official Oref Areas (Official HFC - GREEN)
             officialAreas.forEach(area => {
                 allProcessed.add(area);
@@ -949,18 +1116,18 @@
             // 2. Process Tactical Forecast Areas (Tactical/Non-Oref - RED)
             forecastAreas.forEach(area => {
                 if (allProcessed.has(area)) return;
-                
+
                 let overlap = false;
                 officialAreas.forEach(oa => {
-                   if (oa.includes(area) || area.includes(oa)) overlap = true;
+                    if (oa.includes(area) || area.includes(oa)) overlap = true;
                 });
-                
+
                 if (!overlap) {
                     addMapMarker(area, true);
                     allProcessed.add(area);
                 }
             });
-            
+
             setMapActive(allProcessed.size > 0);
         }
 
@@ -987,11 +1154,11 @@
 
         function addMapMarker(name, isUrgent) {
             if (!mapData) return;
-            
+
             // Region polygon lookup first
             const regionID = getRegionID(name);
             const hasPolygon = regionID && mapData.REGION_POLYGONS[regionID];
-            
+
             if (hasPolygon) {
                 const polyData = mapData.REGION_POLYGONS[regionID];
                 const poly = L.polygon(polyData, {
@@ -1001,7 +1168,7 @@
                     className: isUrgent ? 'tactical-polygon-urgent' : ''
                 }).addTo(sirenMap);
                 sirenLayers.push(poly);
-                
+
                 // If it's a big tactical area (isUrgent=true after swap), don't add the marker
                 if (isUrgent) return;
             }
@@ -1011,7 +1178,7 @@
                 const stripped = name.replace(/^(צפון|דרום|מרכז|מזרח|מערב|אזור)\s*-?\s*/, '').trim();
                 coords = mapData.CITY_COORDS[stripped];
             }
-            
+
             if (coords) {
                 const marker = L.marker(coords, { icon: createSirenIcon(isUrgent) }).addTo(sirenMap);
                 sirenLayers.push(marker);
@@ -1030,25 +1197,25 @@
 
         function formatTimeDiff(s) {
             if (s < 0) return "SIRENS";
-            return `${Math.floor(s/60).toString().padStart(2,'0')}:${Math.floor(s%60).toString().padStart(2,'0')}`;
+            return `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
         }
 
         function militaryTime(isoStr) {
             const d = new Date(isoStr);
-            return d.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+            return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         }
 
         function shortDate(isoStr) {
             const d = new Date(isoStr);
-            return `${d.getDate().toString().padStart(2,'0')}.${(d.getMonth()+1).toString().padStart(2,'0')}.${d.getFullYear()}`;
+            return `${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')}.${d.getFullYear()}`;
         }
 
         function isToday(isoStr) {
             const d = new Date(isoStr);
             const now = new Date();
             return d.getDate() === now.getDate() &&
-                   d.getMonth() === now.getMonth() &&
-                   d.getFullYear() === now.getFullYear();
+                d.getMonth() === now.getMonth() &&
+                d.getFullYear() === now.getFullYear();
         }
 
         function startTimer(id, targetStr) {
@@ -1078,8 +1245,8 @@
         function setSafe() {
             document.getElementById('status-container').classList.remove('threat-active');
             document.getElementById('main-panel').classList.remove('alert-active-mode');
-            document.getElementById('status-title').textContent = 'סריקת מערכות תקינה';
-            document.getElementById('status-icon').textContent = '[ מצב ניטור שגרתי ]';
+            document.getElementById('status-title').textContent = 'פעיל';
+            document.getElementById('status-icon').textContent = '[ scanning the area ]';
             document.getElementById('unified-timer').style.display = 'none';
             document.getElementById('raw-text').classList.add('hidden');
             document.getElementById('sub-alerts-wrapper').classList.add('hidden');
@@ -1100,7 +1267,7 @@
             try {
                 const h = await (await fetch('/api/history')).json();
                 renderHistory(h);
-            } catch(e) { console.error(h); }
+            } catch (e) { console.error(h); }
         }
 
         function renderHistory(history) {
@@ -1108,7 +1275,7 @@
 
             const list = history
                 .filter(i => i.target_time || i.expected_time_text)
-                .sort((a,b) => new Date(b.received_at) - new Date(a.received_at));
+                .sort((a, b) => new Date(b.target_time || b.received_at) - new Date(a.target_time || a.received_at));
 
             // -- CALCULATE STATS --
             document.getElementById('stat-total').textContent = list.length;
@@ -1140,8 +1307,8 @@
                 const diffMins = Math.floor(diffMs / 60000);
                 let lastStr = '';
                 if (diffMins < 60) lastStr = `${diffMins}m AGO`;
-                else if (diffMins < 1440) lastStr = `${Math.floor(diffMins/60)}h AGO`;
-                else lastStr = `${Math.floor(diffMins/1440)}d AGO`;
+                else if (diffMins < 1440) lastStr = `${Math.floor(diffMins / 60)}h AGO`;
+                else lastStr = `${Math.floor(diffMins / 1440)}d AGO`;
                 document.getElementById('stat-last').textContent = lastStr;
             }
 
@@ -1189,7 +1356,7 @@
 
             const now = new Date();
             let relevant = false;
-            if (data.target_time)  relevant = ((now - new Date(data.target_time))  / 1000) < 900;
+            if (data.target_time) relevant = ((now - new Date(data.target_time)) / 1000) < 900;
             else if (data.received_at) relevant = ((now - new Date(data.received_at)) / 1000) < 900;
             if (!relevant) { setSafe(); return; }
 
@@ -1206,25 +1373,25 @@
             document.getElementById('unified-timer').style.display = 'none';
 
             const wrapper = document.getElementById('sub-alerts-wrapper');
-            const cont    = document.getElementById('sub-alerts-container');
+            const cont = document.getElementById('sub-alerts-container');
             cont.innerHTML = '';
 
             if (data.alerts && data.alerts.length) {
                 wrapper.classList.remove('hidden');
                 data.alerts.forEach((alert, i) => {
                     if (!alert.areas || !alert.areas.length) return;
-                    
+
                     // Add areas to tactical set for map sync
                     alert.areas.forEach(area => window.urgentCities.add(area));
 
                     const card = document.createElement('div');
                     card.className = 'sub-alert-card';
                     card.style.animationDelay = `${i * 0.07}s`;
-                    card.dataset.index = `VEC-0${i+1}`;
+                    card.dataset.index = `VEC-0${i + 1}`;
 
                     const left = document.createElement('div');
                     left.innerHTML = `
-                        <div class="vec-designator orbitron">[ INTERCEPT VEC-0${i+1} ]</div>
+                        <div class="vec-designator orbitron">[ INTERCEPT VEC-0${i + 1} ]</div>
                         <div class="vec-areas">${alert.areas.join(' // ')}</div>`;
                     card.appendChild(left);
 
@@ -1258,4 +1425,5 @@
         setInterval(fetchHistory, HISTORY_INTERVAL);
     </script>
 </body>
+
 </html>
