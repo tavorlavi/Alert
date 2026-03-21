@@ -140,6 +140,15 @@ KNOWN_AREAS = [
     "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון"
 ]
 
+TACTICAL_REGION_MAPPING = {
+    "באר שבע": "דרום", "דימונה": "דרום", "אשדוד": "דרום", "אשקלון": "דרום",
+    "נתיבות": "דרום", "שדרות": "דרום", "אילת": "דרום", "אופקים": "דרום",
+    "תל אביב": "מרכז", "ראשון לציון": "מרכז", "חולון": "מרכז", "רמת גן": "מרכז",
+    "פתח תקווה": "מרכז", "הרצליה": "מרכז", "נתניה": "שרון", "כפר סבא": "שרון",
+    "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
+    "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון"
+}
+
 def clean_hebrew_city(city_name):
     """Clean government city DB noise (like parentheses or double spaces)"""
     name = re.sub(r'\(.*?\)', '', city_name)
@@ -177,6 +186,10 @@ def extract_areas_from_text(text):
         
         for part in re.split(r'[,/|\-\n]', line):
             part = re.sub(r'\(.*?\)', '', part).strip()
+            
+            for city, region in TACTICAL_REGION_MAPPING.items():
+                if city in part:
+                    part = part.replace(city, region)
             
             # Extract recognized predefined areas
             found_known = False
@@ -250,6 +263,10 @@ def extract_forecast_data(text):
         line_areas = []
         for part in re.split(r'[,/|\-\n]', line_clean):
             part = re.sub(r'\(.*?\)', '', part).strip()
+            
+            for city, region in TACTICAL_REGION_MAPPING.items():
+                if city in part:
+                    part = part.replace(city, region)
             
             # Check against KNOWN_AREAS first
             found_known = False
