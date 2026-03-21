@@ -1094,12 +1094,20 @@
             // Check if anything changed in Oref data or Tactical forecasts
             const orefStr = JSON.stringify(orefData);
             if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
-            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length > 0) {
-                // Clear if everything expired
+            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
+            
+            // Only clear maps if Oref is empty AND urgentCities is empty
+            const orefEmpty = !orefData.data || orefData.data.length === 0;
+            if (orefEmpty && window.urgentCities.size === 0 && sirenLayers.length > 0) {
                 clearSirenMarkers();
                 setMapActive(false);
                 return;
             }
+            
+            // If nothing changed in Oref and urgentCities is still same as last time, actually we can skip re-drawing.
+            // But if we're here, either Oref changed, OR urgentCities has items, OR both.
+            // Wait, if Oref is same, but urgentCities changed, we MUST redraw.
+            // If Oref is same AND urgentCities hasn't changed... tracking urgentCities changes is annoying, so we just redraw.
 
             lastOrefStr = orefStr;
             clearSirenMarkers();
