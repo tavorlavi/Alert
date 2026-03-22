@@ -81,6 +81,9 @@ channel_last_areas = {}      # Track last areas mentioned by channel to group up
 active_alerts_by_area = {}   # Track current active alerts per individual area
 active_oref_alerts = []      # Track official Pikud Haoref alerts
 
+# Mock state: keeps target_time stable across polls so the countdown reaches zero
+_mock_tactical_state: dict = {"key": None, "target_time": None}
+
 # Store alert history (last 50 alerts)
 alert_history = []
 MAX_HISTORY = 50
@@ -158,6 +161,11 @@ TACTICAL_REGION_MAPPING = {
     "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
     "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון"
 }
+
+# Inverted: region → list of specific cities (for oref mock expansion)
+_REGION_TO_CITIES: dict[str, list[str]] = {}
+for _city, _region in TACTICAL_REGION_MAPPING.items():
+    _REGION_TO_CITIES.setdefault(_region, []).append(_city)
 
 def extract_specific_places_from_text(text):
     """Extract city names from message text that are present in CITY_COORDS_LOOKUP."""
@@ -954,9 +962,18 @@ async def telegram_polling_loop():
 @app.get("/api/latest")
 async def get_latest_event(mock: bool = False, tactical: str = None, minutes: float = 5):
     if mock and tactical:
+        global _mock_tactical_state
         areas = [a.strip() for a in tactical.split(",") if a.strip()]
         now = datetime.now(local_tz)
-        target_dt = now + timedelta(minutes=minutes)
+        mock_key = f"{tactical}:{minutes}"
+
+        # Reset if areas/minutes changed; otherwise reuse stored target_time so
+        # the countdown is stable across polls and actually reaches zero.
+        if _mock_tactical_state["key"] != mock_key:
+            _mock_tactical_state["key"] = mock_key
+            _mock_tactical_state["target_time"] = (now + timedelta(minutes=minutes)).isoformat()
+
+        target_dt = datetime.fromisoformat(_mock_tactical_state["target_time"])
         clock_time = target_dt.strftime("%H:%M")
         total_secs = minutes * 60
         if total_secs < 60:
@@ -992,11 +1009,26 @@ async def get_alert_history():
     return alert_history
 
 @app.get("/api/oref-alerts")
-async def get_oref_alerts(mock: bool = False, oref: str = None):
-    if mock and oref:
-        cities = [c.strip() for c in oref.split(",") if c.strip()]
+async def get_oref_alerts(mock: bool = False, oref: str = None, tactical: str = None):
+    if mock:
+        # Determine which broad areas to expand
+        if oref:
+            broad_areas = [a.strip() for a in oref.split(",") if a.strip()]
+        elif tactical and _mock_tactical_state.get("target_time"):
+            # Fire oref cities once the tactical countdown has elapsed
+            target_dt = datetime.fromisoformat(_mock_tactical_state["target_time"])
+            if datetime.now(local_tz) < target_dt:
+                return {"data": [], "title": ""}
+            broad_areas = [a.strip() for a in tactical.split(",") if a.strip()]
+        else:
+            return {"data": [], "title": ""}
+
+        # Expand broad regions to specific cities; fall back to the area itself
+        cities: list[str] = []
+        for area in broad_areas:
+            cities.extend(_REGION_TO_CITIES.get(area, [area]))
         return {
-            "data": cities,
+            "data": list(dict.fromkeys(cities)),  # deduplicate, preserve order
             "title": "ירי רקטות וטילים",
         }
     global active_oref_alerts
