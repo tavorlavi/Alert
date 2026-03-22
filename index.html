@@ -483,9 +483,15 @@
             margin: 1rem 0;
         }
 
+        @keyframes expired-pulse {
+            0%, 100% { text-shadow: 0 0 4px var(--phosphor); }
+            50%       { text-shadow: 0 0 20px var(--phosphor), 0 0 40px var(--p-glow); }
+        }
+
         .main-timer.expired {
             color: var(--phosphor);
             text-shadow: 0 0 20px var(--p-glow);
+            animation: expired-pulse 1.5s ease-in-out infinite;
         }
 
         .raw-text {
@@ -588,12 +594,31 @@
         .sub-alert-timer.expired {
             color: var(--phosphor);
             text-shadow: 0 0 14px var(--p-glow);
+            animation: expired-pulse 1.5s ease-in-out infinite;
         }
 
         .sub-alert-timer.text-time {
             font-size: 1.25rem;
             color: var(--amber);
             text-shadow: 0 0 10px var(--a-glow);
+        }
+
+        .sub-alert-timer.no-time {
+            color: var(--amber);
+            text-shadow: 0 0 10px var(--a-glow);
+        }
+
+        .sub-alert-timer.no-time::after {
+            content: '···';
+            display: inline-block;
+            width: 0;
+            overflow: hidden;
+            vertical-align: bottom;
+            animation: expand-dots 1.2s steps(3, end) infinite;
+        }
+
+        @keyframes expand-dots {
+            to { width: 1.5em; }
         }
 
         /* ── SECTION DIVIDER ─────────────────────────── */
@@ -1033,6 +1058,7 @@
         let sirenLayers = [];
         let lastOrefStr = null;
         window.urgentCities = new Set(); // To be synced from forecast data
+        window.urgentCityPolygons = new Map(); // area name → tight polygon for בדקות messages
 
         async function loadMapData() {
             try {
@@ -1131,7 +1157,7 @@
                 });
 
                 if (!overlap) {
-                    addMapMarker(area, true);
+                    addMapMarker(area, true, window.urgentCityPolygons.get(area) ?? null);
                     allProcessed.add(area);
                 }
             });
@@ -1160,8 +1186,20 @@
             return null;
         }
 
-        function addMapMarker(name, isUrgent) {
+        function addMapMarker(name, isUrgent, tightPolygon = null) {
             if (!mapData) return;
+
+            // Use pre-computed tight polygon from בדקות messages instead of the big regional shape
+            if (tightPolygon && tightPolygon.length >= 3) {
+                const poly = L.polygon(tightPolygon, {
+                    color: 'var(--red)',
+                    weight: 2,
+                    fillOpacity: 0.15,
+                    className: 'tactical-polygon-urgent',
+                }).addTo(sirenMap);
+                sirenLayers.push(poly);
+                return;
+            }
 
             // Region polygon lookup first
             const regionID = getRegionID(name);
@@ -1204,7 +1242,7 @@
         }
 
         function formatTimeDiff(s) {
-            if (s < 0) return "SIRENS";
+            if (s < 0) return "";
             return `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
         }
 
@@ -1260,6 +1298,7 @@
             document.getElementById('sub-alerts-wrapper').classList.add('hidden');
             clearTimers();
             window.urgentCities.clear();
+            window.urgentCityPolygons.clear();
         }
 
         async function fetchLatest() {
@@ -1359,6 +1398,7 @@
             currentEventStr = str;
             clearTimers();
             window.urgentCities.clear();
+            window.urgentCityPolygons.clear();
 
             if (!data.has_data) { setSafe(); return; }
 
@@ -1390,7 +1430,12 @@
                     if (!alert.areas || !alert.areas.length) return;
 
                     // Add areas to tactical set for map sync
-                    alert.areas.forEach(area => window.urgentCities.add(area));
+                    alert.areas.forEach(area => {
+                        window.urgentCities.add(area);
+                        if (alert.tight_polygon) {
+                            window.urgentCityPolygons.set(area, alert.tight_polygon);
+                        }
+                    });
 
                     const card = document.createElement('div');
                     card.className = 'sub-alert-card';
@@ -1418,6 +1463,9 @@
                         card.appendChild(t);
                         cont.appendChild(card);
                     } else {
+                        const t = document.createElement('div');
+                        t.className = 'sub-alert-timer no-time mono';
+                        card.appendChild(t);
                         cont.appendChild(card);
                     }
                 });

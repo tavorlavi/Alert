@@ -43,6 +43,11 @@ TELEGRAM_CHANNELS = {
         "url": "https://t.me/s/beforeredalert",
         "type": "forecast",
         "label": "Before Red Alert"
+    },
+    "Yemennews7071": {
+        "url": "https://t.me/s/Yemennews7071",
+        "type": "forecast",
+        "label": "Yemen and Iran news"
     }
 }
 TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
@@ -50,6 +55,11 @@ TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
 
 local_tz = tz.gettz("Asia/Jerusalem")
 app = FastAPI()
+
+# Load city coordinates for tight-polygon computation on בדקות messages
+_geo_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "regional_coords_final.json")
+with open(_geo_file) as _f:
+    CITY_COORDS_LOOKUP: dict = json.load(_f).get("CITY_COORDS", {})
 
 # Allow connections from any origin
 app.add_middleware(
@@ -148,6 +158,76 @@ TACTICAL_REGION_MAPPING = {
     "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
     "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון"
 }
+
+def extract_specific_places_from_text(text):
+    """Extract city names from message text that are present in CITY_COORDS_LOOKUP."""
+    places = []
+    seen = set()
+    for line in text.split('\n'):
+        for part in re.split(r'[,،/|]', line):
+            cleaned = re.sub(r'^[בלמהו]+', '', part.strip()).strip()
+            if not cleaned or len(cleaned) < 2:
+                continue
+            for candidate in [cleaned, 'ה' + cleaned]:
+                if candidate in CITY_COORDS_LOOKUP and candidate not in seen:
+                    seen.add(candidate)
+                    places.append(candidate)
+                    break
+    return places
+
+
+def _convex_hull(points):
+    """Andrew's monotone chain convex hull algorithm."""
+    pts = sorted(set(map(tuple, points)))
+    if len(pts) <= 2:
+        return [[p[0], p[1]] for p in pts]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return [[p[0], p[1]] for p in lower[:-1] + upper[:-1]]
+
+
+def _buffer_polygon(hull, buf=0.08):
+    """Expand hull vertices outward from centroid by buf degrees (~8 km)."""
+    if len(hull) < 3:
+        lats = [p[0] for p in hull]
+        lons = [p[1] for p in hull]
+        clat = sum(lats) / len(lats)
+        clon = sum(lons) / len(lons)
+        return [
+            [clat + buf, clon - buf], [clat + buf, clon + buf],
+            [clat - buf, clon + buf], [clat - buf, clon - buf],
+        ]
+    cx = sum(p[0] for p in hull) / len(hull)
+    cy = sum(p[1] for p in hull) / len(hull)
+    result = []
+    for lat, lon in hull:
+        dlat, dlon = lat - cx, lon - cy
+        dist = (dlat ** 2 + dlon ** 2) ** 0.5
+        if dist > 0:
+            result.append([round(lat + dlat / dist * buf, 6), round(lon + dlon / dist * buf, 6)])
+        else:
+            result.append([round(lat + buf, 6), round(lon, 6)])
+    return result
+
+
+def compute_tight_polygon(place_names):
+    """Return a buffered convex hull polygon for the given city names, or None."""
+    coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
+    if not coords:
+        return None
+    return _buffer_polygon(_convex_hull(coords))
+
 
 def clean_hebrew_city(city_name):
     """Clean government city DB noise (like parentheses or double spaces)"""
@@ -304,11 +384,17 @@ def extract_forecast_data(text):
             a["expected_time_text"] = global_expected_text
             a["expected_seconds"] = _to_expected_seconds(global_expected_text)
         
-    return {
+    result = {
         "raw_text": text,
         "clean_text": clean_forecast_text(text),
-        "alerts": alerts
+        "alerts": alerts,
     }
+    if "בדקות" in text:
+        places = extract_specific_places_from_text(text)
+        poly = compute_tight_polygon(places)
+        if poly:
+            result["tight_polygon"] = poly
+    return result
 
 
 def _store_pending_part(channel_name, part_type, payload):
@@ -692,7 +778,8 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                     "clock_time": final_clock_time,
                     "expected_time_text": final_expected_time,
                     "source_channel": channel_name,
-                    "areas": [area]
+                    "areas": [area],
+                    "tight_polygon": extracted.get("tight_polygon"),
                 }
                 
                 # Update today_forecasts (just basic stats tracking)
@@ -886,8 +973,9 @@ async def get_alert_history():
 @app.get("/api/oref-alerts")
 async def get_oref_alerts(mock: bool = False, oref: str = None):
     if mock and oref:
+        cities = [c.strip() for c in oref.split(",") if c.strip()]
         return {
-            "data": [oref],
+            "data": cities,
             "title": "התרעת ניסוי (Oref)"
         }
     global active_oref_alerts
@@ -1059,7 +1147,7 @@ async def oref_polling_loop():
                                     active_oref_alerts.append({
                                         "id": rid,
                                         "areas": areas,
-                                        "msg_dt": alert_dt
+                                        "msg_dt": now
                                     })
                         except Exception:
                             continue
@@ -1087,8 +1175,3 @@ if __name__ == "__main__":
         pass
 
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
-import json
-from datetime import datetime
-import asyncio
-import os
