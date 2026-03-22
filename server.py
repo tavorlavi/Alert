@@ -952,17 +952,38 @@ async def telegram_polling_loop():
                 print(f"Ã¢Å¡Â Ã¯Â¸Â Error polling {ch_name}: {e}")
 
 @app.get("/api/latest")
-async def get_latest_event(mock: bool = False, tactical: str = None):
+async def get_latest_event(mock: bool = False, tactical: str = None, minutes: float = 5):
     if mock and tactical:
+        areas = [a.strip() for a in tactical.split(",") if a.strip()]
+        now = datetime.now(local_tz)
+        target_dt = now + timedelta(minutes=minutes)
+        clock_time = target_dt.strftime("%H:%M")
+        total_secs = minutes * 60
+        if total_secs < 60:
+            expected_time_text = f"{int(total_secs)} שניות"
+        elif minutes == 1:
+            expected_time_text = "דקה"
+        elif minutes == int(minutes):
+            expected_time_text = f"{int(minutes)} דקות"
+        else:
+            expected_time_text = f"{minutes} דקות"
+        areas_label = ", ".join(areas)
+        text = f"שיגורים ל{areas_label}\nצפי {clock_time} מגיע"
+        alert = {
+            "areas": areas,
+            "target_time": target_dt.isoformat(),
+            "clock_time": clock_time,
+            "expected_time_text": expected_time_text,
+            "expected_seconds": int(total_secs),
+            "source_channel": "shigurimsh",
+            "text": text,
+        }
         return {
             "has_data": True,
-            "text": f"התרעת ניסוי (Tactical): {tactical}",
-            "received_at": datetime.now(local_tz).isoformat(),
-            "target_time": (datetime.now(local_tz) + timedelta(minutes=1)).isoformat(),
-            "alerts": [{
-                "areas": [tactical],
-                "target_time": (datetime.now(local_tz) + timedelta(minutes=1)).isoformat()
-            }]
+            "text": text,
+            "received_at": now.isoformat(),
+            "target_time": target_dt.isoformat(),
+            "alerts": [alert],
         }
     return latest_event
 
@@ -976,7 +997,7 @@ async def get_oref_alerts(mock: bool = False, oref: str = None):
         cities = [c.strip() for c in oref.split(",") if c.strip()]
         return {
             "data": cities,
-            "title": "התרעת ניסוי (Oref)"
+            "title": "ירי רקטות וטילים",
         }
     global active_oref_alerts
     now = datetime.now(local_tz)

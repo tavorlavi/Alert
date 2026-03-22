@@ -113,7 +113,7 @@ Channels often split time and area across consecutive messages. Two mechanisms h
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/latest?mock=true&tactical=<area>` | Current forecast event. Mock mode returns test alert. |
+| `GET /api/latest?mock=true&tactical=<area>&minutes=<n>` | Current forecast event. `tactical` is comma-separated areas, `minutes` sets arrival time (default 5). Returns full alert structure. |
 | `GET /api/history` | Last 50 deduped alert history entries |
 | `GET /api/oref-alerts?mock=true&oref=<cities>` | Official Pikud Haoref alerts. Mock accepts comma-separated cities. |
 | `GET /` | Serves `index.html` |
