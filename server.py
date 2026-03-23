@@ -1367,22 +1367,29 @@ async def oref_polling_loop():
             await asyncio.sleep(OREF_POLL_INTERVAL)
 
 
-if __name__ == "__main__":
-    import os, subprocess, sys, time
-    print(f"Checking for existing server on port {PORT}...")
+def kill_port(port):
+    """Kill any process listening on the given port."""
+    import subprocess
+    import signal
+    import time
     try:
-        if os.name == 'nt':
-            output = subprocess.check_output(f"netstat -ano | findstr :{PORT}", shell=True).decode()
-            for line in output.strip().split('\n'):
-                if 'LISTENING' in line:
-                    pid = line.split()[-1]
-                    if str(pid) != str(os.getpid()) and pid != '0':
-                        print(f"Killing old server process (PID: {pid}) on port {PORT}...")
-                        subprocess.call(["taskkill", "/F", "/PID", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        time.sleep(1)
-        else:
-            subprocess.call(["fuser", "-k", f"{PORT}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+        output = subprocess.check_output(
+            ["lsof", "-ti", f"tcp:{port}"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    for pid_str in output.split():
+        pid = int(pid_str)
+        if pid == os.getpid():
+            continue
+        print(f"Killing process {pid} on port {port}...")
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    time.sleep(1)
 
+
+if __name__ == "__main__":
+    kill_port(PORT)
     uvicorn.run(app, host="0.0.0.0", port=PORT)
