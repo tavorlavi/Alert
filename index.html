@@ -1135,7 +1135,8 @@
         function updateSirenMap(orefData) {
             const orefStr = JSON.stringify(orefData);
             const urgentStr = JSON.stringify([...window.urgentCities]);
-            const combined = orefStr + urgentStr;
+            const polyStr = JSON.stringify([...window.urgentCityPolygons.entries()]);
+            const combined = orefStr + urgentStr + polyStr;
             if (combined === lastOrefStr) return;
             lastOrefStr = combined;
 
@@ -1205,6 +1206,44 @@
             }
         }
 
+        function animatePolygon(layer, targetCoords, durationMs) {
+            const startCoords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+            const endCoords = targetCoords;
+            // Resample both polygons to same number of points for smooth interpolation
+            const n = Math.max(startCoords.length, endCoords.length);
+            const from = resamplePoly(startCoords, n);
+            const to = resamplePoly(endCoords, n);
+            const startTime = performance.now();
+            function step(now) {
+                const t = Math.min((now - startTime) / durationMs, 1);
+                const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOut
+                const interp = from.map((p, i) => [
+                    p[0] + (to[i][0] - p[0]) * ease,
+                    p[1] + (to[i][1] - p[1]) * ease,
+                ]);
+                layer.setLatLngs(interp);
+                if (t < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        }
+
+        function resamplePoly(coords, n) {
+            if (coords.length === n) return coords;
+            if (coords.length === 0) return Array(n).fill([0, 0]);
+            const result = [];
+            for (let i = 0; i < n; i++) {
+                const idx = (i / n) * coords.length;
+                const lo = Math.floor(idx);
+                const hi = Math.min(lo + 1, coords.length - 1);
+                const frac = idx - lo;
+                result.push([
+                    coords[lo][0] + (coords[hi][0] - coords[lo][0]) * frac,
+                    coords[lo][1] + (coords[hi][1] - coords[lo][1]) * frac,
+                ]);
+            }
+            return result;
+        }
+
         function updateRedPolygon(area, tightPolygon) {
             if (!mapData) return;
             let polyCoords = null;
@@ -1222,8 +1261,7 @@
 
             const existing = sirenPolyByArea[area];
             if (existing) {
-                // Morph existing polygon to new coords (CSS transition animates the SVG path)
-                existing.setLatLngs(polyCoords);
+                animatePolygon(existing, polyCoords, 1500);
             } else {
                 // Create new polygon
                 const poly = L.polygon(polyCoords, {
