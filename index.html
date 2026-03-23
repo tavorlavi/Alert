@@ -1242,7 +1242,7 @@
         }
 
         function formatTimeDiff(s) {
-            if (s < 0) return "";
+            if (s <= 0) return "00:00";
             return `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
         }
 
@@ -1469,6 +1469,21 @@
                         cont.appendChild(card);
                     }
                 });
+
+                // מבזק refinement: replace broad forecast areas with specific official cities
+                const mivzakReplacements = data.mivzak_replacements || {};
+                if (Object.keys(mivzakReplacements).length > 0) {
+                    const refined = new Set();
+                    window.urgentCities.forEach(area => {
+                        const specific = mivzakReplacements[area];
+                        if (specific && specific.length) {
+                            specific.forEach(city => refined.add(city));
+                        } else {
+                            refined.add(area);
+                        }
+                    });
+                    window.urgentCities = refined;
+                }
             } else {
                 wrapper.classList.add('hidden');
             }
