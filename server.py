@@ -79,12 +79,10 @@ latest_event = {
 
 channel_last_areas = {}      # Track last areas mentioned by channel to group updates
 active_alerts_by_area = {}   # Track current active alerts per individual area
-active_oref_alerts = []      # Track official Pikud Haoref alerts
-active_mivzak: dict = {}     # {tactical_area: [cities]} from latest מבזק; cleared on all-clear
-_oref_tg_seen_ids: set = set()  # Dedup tracker for PikudHaOref_all messages
-
-# Mock state: keeps target_time stable across polls so the countdown reaches zero
-_mock_tactical_state: dict = {"key": None, "target_time": None}
+active_oref_alerts: list = []    # [{id, cities, msg_dt}] from PikudHaOref_all siren messages
+active_mivzak: dict = {}         # {region: [cities]} built dynamically via TACTICAL_REGION_MAPPING
+_oref_seen_ids: set = set()      # Dedup for independent oref scraper
+_mock_state: dict = {"key": None, "target_time": None}
 
 # Store alert history (last 50 alerts)
 alert_history = []
@@ -169,48 +167,20 @@ _REGION_TO_CITIES: dict[str, list[str]] = {}
 for _city, _region in TACTICAL_REGION_MAPPING.items():
     _REGION_TO_CITIES.setdefault(_region, []).append(_city)
 
-# Maps official Pikud Haoref region headers → tactical broadcast area names
-# (the same names used by early-warning Telegram channels)
-OREF_REGION_TO_TACTICAL: dict[str, str] = {
-    "אזור לכיש": "דרום",
-    "אזור מערב לכיש": "דרום",
-    "אזור מרכז הנגב": "דרום",
-    "אזור מערב הנגב": "דרום",
-    "אזור צפון הנגב": "דרום",
-    "אזור ים המלח": "ים המלח",
-    "אזור הערבה": "הערבה",
-    "אזור עוטף עזה": "עוטף עזה",
-    "אזור דן": "גוש דן",
-    "אזור גוש דן": "גוש דן",
-    "אזור תל אביב": "מרכז",
-    "אזור השפלה": "שפלה",
-    "אזור שפלת יהודה": "שפלה",
-    "אזור ירקון": "שרון",
-    "אזור שרון": "שרון",
-    "אזור ירושלים": "ירושלים",
-    "אזור יהודה": "יהודה",
-    "אזור שומרון": "שומרון",
-    "אזור בקעה": "בקעה",
-    "אזור חיפה": "צפון",
-    "אזור קריות": "קריות",
-    "אזור כרמל": "צפון",
-    "אזור זבולון": "צפון",
-    "אזור עמק יזרעאל": "עמק יזרעאל",
-    "אזור מנשה": "עמק יזרעאל",
-    "אזור הגליל העליון": "גליל עליון",
-    "אזור הגליל המערבי": "גליל מערבי",
-    "אזור הגליל התחתון": "גליל תחתון",
-    "אזור גליל עליון": "גליל עליון",
-    "אזור גליל מערבי": "גליל מערבי",
-    "אזור גליל תחתון": "גליל תחתון",
-    "אזור עכו": "צפון",
-    "אזור כנרת": "צפון",
-    "אזור קרית שמונה": "צפון",
-    "אזור הגולן": "גולן",
-    "אזור גולן": "גולן",
-    "אזור צפון הגולן": "גולן",
-    "אזור קו העימות": "צפון",
-}
+OREF_URL = "https://t.me/s/PikudHaOref_all"
+OREF_POLL_INTERVAL = 3  # seconds
+
+MOCK_OREF_MESSAGES = [
+    {
+        "text": "🚨 מבזק\nבדקות הקרובות צפויות להתקבל התרעות באזורך\nאזור תל אביב\nתל אביב, רמת גן, חולון\nאזור דן\nבני ברק, גבעתיים",
+        "id": "mock_mivzak_1",
+    },
+    {
+        "text": "🚨 ירי רקטות וטילים\nאזור תל אביב\nתל אביב, רמת גן, חולון (דקה וחצי)\nראשון לציון, פתח תקווה (דקה)\nהיכנסו למרחב המוגן.",
+        "id": "mock_siren_1",
+    },
+]
+
 
 def extract_specific_places_from_text(text):
     """Extract city names from message text that are present in CITY_COORDS_LOOKUP."""
@@ -510,51 +480,17 @@ def get_target_datetime(target_time_str, reference_time=None):
 
     return target_time
 
-def parse_oref_mivzak(text: str) -> dict | None:
-    """Parse a PikudHaOref_all מבזק message.
-    Returns {tactical_area: [cities]} or None if not a מבזק.
 
-    Message format:
-      🚨 מבזק (date) time
-      בדקות הקרובות צפויות להתקבל התרעות באזורך
-      על תושבי האזורים הבאים...
-      אזור X
-      city1, city2, city3...
-      אזור Y
-      city4, city5...
-    """
-    if "מבזק" not in text or "בדקות הקרובות" not in text:
-        return None
-    result: dict[str, list[str]] = {}
-    current_tactical: str | None = None
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("🚨") or "בדקות הקרובות" in line or "על תושבי" in line or "במקרה של" in line:
-            continue
-        if line.startswith("אזור "):
-            current_tactical = OREF_REGION_TO_TACTICAL.get(line)
-            continue
-        if current_tactical is None:
-            continue
-        cities = [c.strip() for c in line.split(',') if c.strip()]
-        if cities:
-            result.setdefault(current_tactical, []).extend(cities)
-    return result if result else None
+# ==========================
+# Pikud Haoref (PikudHaOref_all Telegram channel)
+# ==========================
 
+def parse_oref_siren_cities(text: str) -> list[str] | None:
+    """Extract city names from a PikudHaOref_all active siren message.
 
-def parse_oref_siren_cities(text: str) -> list | None:
-    """Parse a PikudHaOref_all message. Returns city list for active sirens, None otherwise.
-
-    Active siren messages start with '🚨 ירי רקטות וטילים'.
-    Format:
-      🚨 ירי רקטות וטילים (date) time
-      אזור X
-      city1, city2 (30 שניות)
-      city3, city4 (דקה)
-      ...
-      היכנסו למרחב המוגן.
+    Siren messages contain 'ירי רקטות וטילים'. Cities are listed under
+    region headers, with optional timing suffixes like (30 שניות).
+    Returns flat list of city names, or None if not a siren message.
     """
     if "ירי רקטות וטילים" not in text:
         return None
@@ -563,13 +499,48 @@ def parse_oref_siren_cities(text: str) -> list | None:
         line = line.strip()
         if not line:
             continue
-        if line.startswith("🚨") or line.startswith("אזור ") or line == "היכנסו למרחב המוגן.":
+        if line.startswith("\U0001f6a8") or line.startswith("אזור ") or "היכנסו למרחב" in line:
             continue
-        # Strip trailing timing suffix: (30 שניות), (דקה), (דקה וחצי), etc.
         line = re.sub(r'\s*\([^)]+\)\s*$', '', line).strip()
         if line:
             cities.extend(c.strip() for c in line.split(',') if c.strip())
     return cities if cities else None
+
+
+def parse_oref_mivzak(text: str) -> list[str] | None:
+    """Extract city names from a PikudHaOref_all מבזק early-warning message.
+
+    מבזק messages contain both 'מבזק' and 'בדקות הקרובות'. Cities are listed
+    under region headers (אזור X). We ignore the region grouping and return
+    a flat list of all cities mentioned.
+    Returns list of city names, or None if not a מבזק message.
+    """
+    if "מבזק" not in text or "בדקות הקרובות" not in text:
+        return None
+    cities = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if (line.startswith("\U0001f6a8") or line.startswith("אזור ")
+                or "בדקות הקרובות" in line or "על תושבי" in line
+                or "במקרה של" in line):
+            continue
+        cities.extend(c.strip() for c in line.split(',') if c.strip())
+    return cities if cities else None
+
+
+def build_mivzak_replacements(cities: list[str]) -> dict[str, list[str]]:
+    """Build {region: [cities]} dict by reverse-looking up cities in TACTICAL_REGION_MAPPING.
+
+    E.g. ["תל אביב", "רמת גן"] -> {"מרכז": ["תל אביב", "רמת גן"]}
+    """
+    result: dict[str, list[str]] = {}
+    for city in cities:
+        region = TACTICAL_REGION_MAPPING.get(city)
+        if region:
+            result.setdefault(region, []).append(city)
+    return result
 
 
 # ==========================
@@ -1069,18 +1040,16 @@ async def telegram_polling_loop():
 @app.get("/api/latest")
 async def get_latest_event(mock: bool = False, tactical: str = None, minutes: float = 5):
     if mock and tactical:
-        global _mock_tactical_state
+        global _mock_state
         areas = [a.strip() for a in tactical.split(",") if a.strip()]
         now = datetime.now(local_tz)
         mock_key = f"{tactical}:{minutes}"
 
-        # Reset if areas/minutes changed; otherwise reuse stored target_time so
-        # the countdown is stable across polls and actually reaches zero.
-        if _mock_tactical_state["key"] != mock_key:
-            _mock_tactical_state["key"] = mock_key
-            _mock_tactical_state["target_time"] = (now + timedelta(minutes=minutes)).isoformat()
+        if _mock_state["key"] != mock_key:
+            _mock_state["key"] = mock_key
+            _mock_state["target_time"] = (now + timedelta(minutes=minutes)).isoformat()
 
-        target_dt = datetime.fromisoformat(_mock_tactical_state["target_time"])
+        target_dt = datetime.fromisoformat(_mock_state["target_time"])
         clock_time = target_dt.strftime("%H:%M")
         total_secs = minutes * 60
         if total_secs < 60:
@@ -1099,7 +1068,7 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
             "clock_time": clock_time,
             "expected_time_text": expected_time_text,
             "expected_seconds": int(total_secs),
-            "source_channel": "shigurimsh",
+            "source_channel": "mock",
             "text": text,
         }
         return {
@@ -1119,39 +1088,33 @@ async def get_alert_history():
 @app.get("/api/oref-alerts")
 async def get_oref_alerts(mock: bool = False, oref: str = None, tactical: str = None):
     if mock:
-        # Determine which broad areas to expand
         if oref:
             broad_areas = [a.strip() for a in oref.split(",") if a.strip()]
-        elif tactical and _mock_tactical_state.get("target_time"):
-            # Fire oref cities once the tactical countdown has elapsed
-            target_dt = datetime.fromisoformat(_mock_tactical_state["target_time"])
+        elif tactical and _mock_state.get("target_time"):
+            target_dt = datetime.fromisoformat(_mock_state["target_time"])
             if datetime.now(local_tz) < target_dt:
                 return {"data": [], "title": ""}
             broad_areas = [a.strip() for a in tactical.split(",") if a.strip()]
         else:
             return {"data": [], "title": ""}
-
-        # Expand broad regions to specific cities; fall back to the area itself
         cities: list[str] = []
         for area in broad_areas:
             cities.extend(_REGION_TO_CITIES.get(area, [area]))
         return {
-            "data": list(dict.fromkeys(cities)),  # deduplicate, preserve order
+            "data": list(dict.fromkeys(cities)),
             "title": "ירי רקטות וטילים",
         }
+
     global active_oref_alerts
     now = datetime.now(local_tz)
-    # Filter out alerts older than 5 minutes (300s)
     active_oref_alerts = [a for a in active_oref_alerts if (now - a["msg_dt"]).total_seconds() <= 300]
-    
-    all_areas = []
+    all_cities: list[str] = []
     for a in active_oref_alerts:
-        all_areas.extend(a["areas"])
-    all_areas = list(dict.fromkeys(all_areas))
-    
+        all_cities.extend(a["cities"])
+    all_cities = list(dict.fromkeys(all_cities))
     return {
-        "data": all_areas,
-        "title": "ירי רקטות וטילים" if all_areas else ""
+        "data": all_cities,
+        "title": "ירי רקטות וטילים" if all_cities else "",
     }
 
 @app.get("/")
@@ -1256,6 +1219,25 @@ async def debug_load_messages():
             pass
 
         print(f"🐞 DEBUG: Done! alert_history has {len(alert_history)} entries.")
+
+        # Load mock oref messages for מרכז replay
+        global active_oref_alerts, active_mivzak
+        mock_now = datetime.now(local_tz) - timedelta(seconds=10)
+        for mock_msg in MOCK_OREF_MESSAGES:
+            text = mock_msg["text"]
+            cities = parse_oref_siren_cities(text)
+            if cities:
+                active_oref_alerts.append({
+                    "id": mock_msg["id"],
+                    "cities": cities,
+                    "msg_dt": mock_now,
+                })
+                continue
+            mivzak_cities = parse_oref_mivzak(text)
+            if mivzak_cities:
+                active_mivzak.update(build_mivzak_replacements(mivzak_cities))
+        print(f"🐞 DEBUG: Loaded {len(MOCK_OREF_MESSAGES)} mock oref messages.")
+
     except Exception as e:
         import traceback
         print(f"DEBUG LOAD FAILED: {e}")
@@ -1272,16 +1254,24 @@ async def startup_event():
     # Start Telegram channel scraping (no auth needed)
     asyncio.create_task(telegram_polling_loop())
     
-    # Start Oref polling loop
+    # Start Oref polling loop (independent from forecast channels)
     asyncio.create_task(oref_polling_loop())
 
+
 async def oref_polling_loop():
+    """Independent polling loop for PikudHaOref_all Telegram channel.
+
+    Scrapes the public page, parses messages with TelegramPageParser,
+    and processes siren alerts, מבזק early warnings, and all-clear events.
+    """
     global active_oref_alerts, active_mivzak
-    print("📡 Starting Pikud Haoref Telegram polling loop (PikudHaOref_all)...")
-    url = "https://t.me/s/PikudHaOref_all"
+    url = OREF_URL
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/131.0.0.0 Safari/537.36",
     }
+    print(f"Starting Pikud Haoref polling: {url}")
     async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as client:
         while True:
             try:
@@ -1295,9 +1285,9 @@ async def oref_polling_loop():
                         text = msg.get("text", "").strip()
                         if not msg_id or not text:
                             continue
-                        if msg_id in _oref_tg_seen_ids:
+                        if msg_id in _oref_seen_ids:
                             continue
-                        _oref_tg_seen_ids.add(msg_id)
+                        _oref_seen_ids.add(msg_id)
                         try:
                             msg_dt = datetime.fromisoformat(
                                 msg.get("datetime", "").replace("Z", "+00:00")
@@ -1306,26 +1296,33 @@ async def oref_polling_loop():
                             msg_dt = now
                         if (now - msg_dt).total_seconds() > 300:
                             continue
-                        # Active siren
+
                         cities = parse_oref_siren_cities(text)
                         if cities:
                             active_oref_alerts.append({
                                 "id": msg_id,
-                                "areas": cities,
+                                "cities": cities,
                                 "msg_dt": msg_dt,
                             })
                             continue
-                        # Pre-siren early warning: update refinement map
-                        mivzak = parse_oref_mivzak(text)
-                        if mivzak:
-                            active_mivzak.update(mivzak)
+
+                        mivzak_cities = parse_oref_mivzak(text)
+                        if mivzak_cities:
+                            active_mivzak.update(build_mivzak_replacements(mivzak_cities))
                             continue
-                        # All-clear: clear refinement map
+
                         if "האירוע הסתיים" in text:
                             active_mivzak.clear()
+
+                    # Expire old alerts
+                    active_oref_alerts = [
+                        a for a in active_oref_alerts
+                        if (now - a["msg_dt"]).total_seconds() <= 300
+                    ]
             except Exception as e:
-                print(f"⚠️ Oref Telegram polling error: {e}")
-            await asyncio.sleep(3)
+                print(f"Oref polling error: {e}")
+            await asyncio.sleep(OREF_POLL_INTERVAL)
+
 
 if __name__ == "__main__":
     import os, subprocess, sys, time

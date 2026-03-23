@@ -88,3 +88,77 @@ async def test_process_real_data():
             
     finally:
         server.datetime = original_now
+
+
+# ==========================
+# Pikud Haoref (oref) tests
+# ==========================
+
+def test_parse_oref_siren_cities():
+    text = (
+        "🚨 ירי רקטות וטילים 23.03.2026 14:30\n"
+        "אזור תל אביב\n"
+        "תל אביב, רמת גן (דקה וחצי)\n"
+        "חולון, ראשון לציון (דקה)\n"
+        "היכנסו למרחב המוגן."
+    )
+    cities = server.parse_oref_siren_cities(text)
+    assert cities is not None
+    assert "תל אביב" in cities
+    assert "רמת גן" in cities
+    assert "חולון" in cities
+    assert "ראשון לציון" in cities
+    # Timing suffixes should be stripped
+    for city in cities:
+        assert "(" not in city
+        assert ")" not in city
+
+
+def test_parse_oref_siren_cities_not_siren():
+    assert server.parse_oref_siren_cities("הודעה רגילה") is None
+    assert server.parse_oref_siren_cities("🚨 מבזק\nבדקות הקרובות") is None
+
+
+def test_parse_oref_mivzak():
+    text = (
+        "🚨 מבזק 23.03.2026 14:25\n"
+        "בדקות הקרובות צפויות להתקבל התרעות באזורך\n"
+        "על תושבי האזורים הבאים להיכנס למרחב המוגן\n"
+        "אזור תל אביב\n"
+        "תל אביב, רמת גן, חולון\n"
+        "אזור דן\n"
+        "בני ברק, גבעתיים"
+    )
+    cities = server.parse_oref_mivzak(text)
+    assert cities is not None
+    assert "תל אביב" in cities
+    assert "רמת גן" in cities
+    assert "חולון" in cities
+    assert "בני ברק" in cities
+    assert "גבעתיים" in cities
+
+
+def test_parse_oref_mivzak_not_mivzak():
+    assert server.parse_oref_mivzak("הודעה רגילה") is None
+    assert server.parse_oref_mivzak("🚨 ירי רקטות וטילים") is None
+    # Must have BOTH markers
+    assert server.parse_oref_mivzak("מבזק בלי הסיפא") is None
+
+
+def test_build_mivzak_replacements():
+    cities = ["תל אביב", "רמת גן", "חולון", "באר שבע"]
+    result = server.build_mivzak_replacements(cities)
+    assert "מרכז" in result
+    assert "תל אביב" in result["מרכז"]
+    assert "רמת גן" in result["מרכז"]
+    assert "חולון" in result["מרכז"]
+    assert "דרום" in result
+    assert "באר שבע" in result["דרום"]
+
+
+def test_build_mivzak_replacements_unknown_cities():
+    cities = ["עיר שלא קיימת", "תל אביב"]
+    result = server.build_mivzak_replacements(cities)
+    assert "מרכז" in result
+    assert "תל אביב" in result["מרכז"]
+    assert len(result) == 1  # unknown city not mapped
