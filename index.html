@@ -1215,18 +1215,16 @@
             const regionID = getRegionID(name);
             const hasPolygon = regionID && mapData.REGION_POLYGONS[regionID];
 
-            if (hasPolygon) {
+            if (hasPolygon && isUrgent) {
                 const polyData = mapData.REGION_POLYGONS[regionID];
                 const poly = L.polygon(polyData, {
-                    color: isUrgent ? 'var(--red)' : 'var(--phosphor)',
+                    color: 'var(--red)',
                     weight: 2,
                     fillOpacity: 0.15,
-                    className: isUrgent ? 'tactical-polygon-urgent' : ''
+                    className: 'tactical-polygon-urgent'
                 }).addTo(sirenMap);
                 sirenLayers.push(poly);
-
-                // If it's a big tactical area (isUrgent=true after swap), don't add the marker
-                if (isUrgent) return;
+                return;
             }
 
             let coords = mapData.CITY_COORDS[name] || mapData.REGION_COORDS[name];
