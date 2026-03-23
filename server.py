@@ -81,6 +81,7 @@ channel_last_areas = {}      # Track last areas mentioned by channel to group up
 active_alerts_by_area = {}   # Track current active alerts per individual area
 active_oref_alerts: list = []    # [{id, cities, msg_dt}] from PikudHaOref_all siren messages
 active_mivzak: dict = {}         # {region: [cities]} built dynamically via TACTICAL_REGION_MAPPING
+active_mivzak_polygons: dict = {}  # {region: [[lat,lon], ...]} tight polygons from מבזק cities
 _oref_seen_ids: set = set()      # Dedup for independent oref scraper
 _mock_state: dict = {"key": None, "target_time": None}
 
@@ -555,17 +556,24 @@ def parse_oref_mivzak(text: str) -> list[str] | None:
     return cities if cities else None
 
 
-def build_mivzak_replacements(cities: list[str]) -> dict[str, list[str]]:
-    """Build {region: [cities]} dict by reverse-looking up cities in TACTICAL_REGION_MAPPING.
+def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], dict[str, list]]:
+    """Build {region: [cities]} and {region: polygon} from מבזק city list.
 
-    E.g. ["תל אביב", "רמת גן"] -> {"מרכז": ["תל אביב", "רמת גן"]}
+    Groups cities by region via TACTICAL_REGION_MAPPING, then computes a tight
+    polygon for each region's cities.
+    Returns (replacements, polygons).
     """
-    result: dict[str, list[str]] = {}
+    replacements: dict[str, list[str]] = {}
     for city in cities:
         region = TACTICAL_REGION_MAPPING.get(city)
         if region:
-            result.setdefault(region, []).append(city)
-    return result
+            replacements.setdefault(region, []).append(city)
+    polygons: dict[str, list] = {}
+    for region, region_cities in replacements.items():
+        poly = compute_tight_polygon(region_cities)
+        if poly:
+            polygons[region] = poly
+    return replacements, polygons
 
 
 # ==========================
@@ -1103,8 +1111,9 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
             "target_time": target_dt.isoformat(),
             "alerts": [alert],
             "mivzak_replacements": active_mivzak,
+            "mivzak_polygons": active_mivzak_polygons,
         }
-    return {**latest_event, "mivzak_replacements": active_mivzak}
+    return {**latest_event, "mivzak_replacements": active_mivzak, "mivzak_polygons": active_mivzak_polygons}
 
 @app.get("/api/history")
 async def get_alert_history():
@@ -1260,7 +1269,9 @@ async def debug_load_messages():
                 continue
             mivzak_cities = parse_oref_mivzak(text)
             if mivzak_cities:
-                active_mivzak.update(build_mivzak_replacements(mivzak_cities))
+                replacements, polygons = build_mivzak_replacements(mivzak_cities)
+                active_mivzak.update(replacements)
+                active_mivzak_polygons.update(polygons)
         print(f"🐞 DEBUG: Loaded {len(MOCK_OREF_MESSAGES)} mock oref messages.")
 
     except Exception as e:
@@ -1333,11 +1344,14 @@ async def oref_polling_loop():
 
                         mivzak_cities = parse_oref_mivzak(text)
                         if mivzak_cities:
-                            active_mivzak.update(build_mivzak_replacements(mivzak_cities))
+                            replacements, polygons = build_mivzak_replacements(mivzak_cities)
+                            active_mivzak.update(replacements)
+                            active_mivzak_polygons.update(polygons)
                             continue
 
                         if "האירוע הסתיים" in text:
                             active_mivzak.clear()
+                            active_mivzak_polygons.clear()
 
                     # Expire old alerts
                     active_oref_alerts = [

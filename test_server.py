@@ -147,18 +147,20 @@ def test_parse_oref_mivzak_not_mivzak():
 
 def test_build_mivzak_replacements():
     cities = ["תל אביב", "רמת גן", "חולון", "באר שבע"]
-    result = server.build_mivzak_replacements(cities)
-    assert "מרכז" in result
-    assert "תל אביב" in result["מרכז"]
-    assert "רמת גן" in result["מרכז"]
-    assert "חולון" in result["מרכז"]
-    assert "דרום" in result
-    assert "באר שבע" in result["דרום"]
+    replacements, polygons = server.build_mivzak_replacements(cities)
+    assert "מרכז" in replacements
+    assert "תל אביב" in replacements["מרכז"]
+    assert "רמת גן" in replacements["מרכז"]
+    assert "חולון" in replacements["מרכז"]
+    assert "דרום" in replacements
+    assert "באר שבע" in replacements["דרום"]
+    assert "מרכז" in polygons
+    assert len(polygons["מרכז"]) >= 3  # valid polygon
 
 
 def test_build_mivzak_replacements_unknown_cities():
     cities = ["עיר שלא קיימת", "תל אביב"]
-    result = server.build_mivzak_replacements(cities)
-    assert "מרכז" in result
-    assert "תל אביב" in result["מרכז"]
-    assert len(result) == 1  # unknown city not mapped
+    replacements, polygons = server.build_mivzak_replacements(cities)
+    assert "מרכז" in replacements
+    assert "תל אביב" in replacements["מרכז"]
+    assert len(replacements) == 1

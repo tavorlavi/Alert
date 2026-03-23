@@ -1059,6 +1059,7 @@
         let lastOrefStr = null;
         window.urgentCities = new Set(); // To be synced from forecast data
         window.urgentCityPolygons = new Map(); // area name → tight polygon for בדקות messages
+        window.mivzakCityLists = {}; // {area: [cities]} from מבזק for overlap checking
 
         async function loadMapData() {
             try {
@@ -1148,9 +1149,18 @@
                 addMapMarker(area, false);
             });
             // 2. Process Tactical Forecast Areas (Tactical/Non-Oref - RED)
+            const mivzakCities = window.mivzakCityLists || {};
             forecastAreas.forEach(area => {
                 if (allProcessed.has(area)) return;
 
+                // Check if oref confirmed all cities for this area (via מבזק city list)
+                const expectedCities = mivzakCities[area];
+                if (expectedCities && expectedCities.length > 0) {
+                    const allConfirmed = expectedCities.every(c => officialAreas.has(c));
+                    if (allConfirmed) return;
+                }
+
+                // Fallback: direct name overlap
                 let overlap = false;
                 officialAreas.forEach(oa => {
                     if (oa.includes(area) || area.includes(oa)) overlap = true;
@@ -1470,19 +1480,17 @@
                     }
                 });
 
-                // מבזק refinement: replace broad forecast areas with specific official cities
+                // מבזק refinement: shrink broad forecast polygons to tight polygons
+                // around the specific cities mentioned in the מבזק
                 const mivzakReplacements = data.mivzak_replacements || {};
-                if (Object.keys(mivzakReplacements).length > 0) {
-                    const refined = new Set();
+                const mivzakPolygons = data.mivzak_polygons || {};
+                window.mivzakCityLists = mivzakReplacements;
+                if (Object.keys(mivzakPolygons).length > 0) {
                     window.urgentCities.forEach(area => {
-                        const specific = mivzakReplacements[area];
-                        if (specific && specific.length) {
-                            specific.forEach(city => refined.add(city));
-                        } else {
-                            refined.add(area);
+                        if (mivzakPolygons[area]) {
+                            window.urgentCityPolygons.set(area, mivzakPolygons[area]);
                         }
                     });
-                    window.urgentCities = refined;
                 }
             } else {
                 wrapper.classList.add('hidden');
