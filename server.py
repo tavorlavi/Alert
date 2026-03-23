@@ -270,12 +270,51 @@ def _buffer_polygon(hull, buf=0.08):
     return result
 
 
-def compute_tight_polygon(place_names):
+def compute_tight_polygon(place_names, buf=0.08):
     """Return a buffered convex hull polygon for the given city names, or None."""
     coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
     if not coords:
         return None
-    return _buffer_polygon(_convex_hull(coords))
+    return _buffer_polygon(_convex_hull(coords), buf=buf)
+
+
+def _smooth_polygon(points, segments_per_edge=8):
+    """Round polygon corners into smooth curves.
+
+    For each triplet of consecutive vertices (A, B, C), replace the corner at B
+    with an arc. The arc starts ~30% of the way from B toward A, curves through
+    a control point near B, and ends ~30% from B toward C.
+    """
+    n = len(points)
+    if n < 3:
+        return points
+    result = []
+    for i in range(n):
+        a = points[(i - 1) % n]
+        b = points[i]
+        c = points[(i + 1) % n]
+        # Pull control point inward so arcs don't overshoot
+        r = 0.3
+        start = [b[0] + r * (a[0] - b[0]), b[1] + r * (a[1] - b[1])]
+        end = [b[0] + r * (c[0] - b[0]), b[1] + r * (c[1] - b[1])]
+        for j in range(segments_per_edge):
+            t = j / segments_per_edge
+            # Quadratic bezier: start -> b (control) -> end
+            s = 1 - t
+            lat = s * s * start[0] + 2 * s * t * b[0] + t * t * end[0]
+            lon = s * s * start[1] + 2 * s * t * b[1] + t * t * end[1]
+            result.append([round(lat, 6), round(lon, 6)])
+    return result
+
+
+def compute_smooth_polygon(place_names, buf=0.12):
+    """Like compute_tight_polygon but with rounded corners and bigger buffer."""
+    coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
+    if not coords:
+        return None
+    hull = _convex_hull(coords)
+    buffered = _buffer_polygon(hull, buf=buf)
+    return _smooth_polygon(buffered)
 
 
 def clean_hebrew_city(city_name):
@@ -570,7 +609,7 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
             replacements.setdefault(region, []).append(city)
     polygons: dict[str, list] = {}
     for region, region_cities in replacements.items():
-        poly = compute_tight_polygon(region_cities)
+        poly = compute_smooth_polygon(region_cities)
         if poly:
             polygons[region] = poly
     return replacements, polygons
