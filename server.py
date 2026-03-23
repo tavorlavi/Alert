@@ -1107,7 +1107,7 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
         }
         # Delay mivzak data by 20s so the UI shows big polygon first, then shrinks
         mock_start = datetime.fromisoformat(_mock_state["start_time"])
-        mivzak_ready = (now - mock_start).total_seconds() >= 20
+        mivzak_ready = (now - mock_start).total_seconds() >= 10
         return {
             "has_data": True,
             "text": text,

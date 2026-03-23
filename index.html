@@ -942,6 +942,19 @@
         .tactical-polygon-urgent path {
             animation: poly-glow 2s infinite ease-in-out;
         }
+
+        .tactical-polygon-shrink path {
+            transition: d 1.5s ease-in-out, fill-opacity 1.5s ease-in-out;
+        }
+
+        .tactical-polygon-fadeout {
+            opacity: 0;
+            transition: opacity 1.2s ease-out;
+        }
+
+        .leaflet-overlay-pane svg path {
+            transition: d 1.5s ease-in-out, fill-opacity 0.8s ease-in-out, stroke-opacity 0.8s ease-in-out, opacity 0.8s ease-in-out;
+        }
     </style>
 </head>
 
@@ -1056,10 +1069,12 @@
         let mapData = null;
         let sirenMap = null;
         let sirenLayers = [];
+        let sirenPolyByArea = {};  // area name → Leaflet polygon layer (persistent for transitions)
+        let sirenMarkerLayers = []; // green city markers (non-polygon)
         let lastOrefStr = null;
-        window.urgentCities = new Set(); // To be synced from forecast data
-        window.urgentCityPolygons = new Map(); // area name → tight polygon for בדקות messages
-        window.mivzakCityLists = {}; // {area: [cities]} from מבזק for overlap checking
+        window.urgentCities = new Set();
+        window.urgentCityPolygons = new Map();
+        window.mivzakCityLists = {};
 
         async function loadMapData() {
             try {
@@ -1118,61 +1133,108 @@
         }
 
         function updateSirenMap(orefData) {
-            // Check if anything changed in Oref data or Tactical forecasts
             const orefStr = JSON.stringify(orefData);
-            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
-            if (orefStr === lastOrefStr && window.urgentCities.size === 0 && sirenLayers.length === 0) return;
-            
-            // Only clear maps if Oref is empty AND urgentCities is empty
+            const urgentStr = JSON.stringify([...window.urgentCities]);
+            const combined = orefStr + urgentStr;
+            if (combined === lastOrefStr) return;
+            lastOrefStr = combined;
+
             const orefEmpty = !orefData.data || orefData.data.length === 0;
-            if (orefEmpty && window.urgentCities.size === 0 && sirenLayers.length > 0) {
+            if (orefEmpty && window.urgentCities.size === 0) {
                 clearSirenMarkers();
                 setMapActive(false);
                 return;
             }
-            
-            // If nothing changed in Oref and urgentCities is still same as last time, actually we can skip re-drawing.
-            // But if we're here, either Oref changed, OR urgentCities has items, OR both.
-            // Wait, if Oref is same, but urgentCities changed, we MUST redraw.
-            // If Oref is same AND urgentCities hasn't changed... tracking urgentCities changes is annoying, so we just redraw.
 
-            lastOrefStr = orefStr;
-            clearSirenMarkers();
+            // Clear green city markers (rebuilt each cycle)
+            sirenMarkerLayers.forEach(l => sirenMap.removeLayer(l));
+            sirenMarkerLayers = [];
 
             const officialAreas = new Set(orefData.data || []);
             const forecastAreas = window.urgentCities || new Set();
-            const allProcessed = new Set();
+            const activeAreas = new Set();
 
-            // 1. Process Official Oref Areas (Official HFC - GREEN)
+            // 1. Green city markers for oref-confirmed cities
             officialAreas.forEach(area => {
-                allProcessed.add(area);
-                addMapMarker(area, false);
+                addGreenMarker(area);
             });
-            // 2. Process Tactical Forecast Areas (Tactical/Non-Oref - RED)
+
+            // 2. Red polygons for forecast areas
             const mivzakCities = window.mivzakCityLists || {};
             forecastAreas.forEach(area => {
-                if (allProcessed.has(area)) return;
-
-                // Check if oref confirmed all cities for this area (via מבזק city list)
+                // Skip if oref confirmed all cities for this area
                 const expectedCities = mivzakCities[area];
                 if (expectedCities && expectedCities.length > 0) {
-                    const allConfirmed = expectedCities.every(c => officialAreas.has(c));
-                    if (allConfirmed) return;
+                    if (expectedCities.every(c => officialAreas.has(c))) return;
                 }
-
-                // Fallback: direct name overlap
+                // Skip direct name overlap
                 let overlap = false;
                 officialAreas.forEach(oa => {
                     if (oa.includes(area) || area.includes(oa)) overlap = true;
                 });
+                if (overlap) return;
 
-                if (!overlap) {
-                    addMapMarker(area, true, window.urgentCityPolygons.get(area) ?? null);
-                    allProcessed.add(area);
-                }
+                activeAreas.add(area);
+                const tightPoly = window.urgentCityPolygons.get(area) ?? null;
+                updateRedPolygon(area, tightPoly);
             });
 
-            setMapActive(allProcessed.size > 0);
+            // Fade out polygons for areas no longer active
+            for (const [area, layer] of Object.entries(sirenPolyByArea)) {
+                if (!activeAreas.has(area)) {
+                    layer.getElement()?.classList.add('tactical-polygon-fadeout');
+                    const lyr = layer;
+                    setTimeout(() => { sirenMap.removeLayer(lyr); }, 1200);
+                    delete sirenPolyByArea[area];
+                }
+            }
+
+            setMapActive(activeAreas.size > 0 || officialAreas.size > 0);
+        }
+
+        function addGreenMarker(name) {
+            if (!mapData) return;
+            let coords = mapData.CITY_COORDS[name] || mapData.REGION_COORDS[name];
+            if (!coords) {
+                const stripped = name.replace(/^(צפון|דרום|מרכז|מזרח|מערב|אזור)\s*-?\s*/, '').trim();
+                coords = mapData.CITY_COORDS[stripped];
+            }
+            if (coords) {
+                const marker = L.marker(coords, { icon: createSirenIcon(false) }).addTo(sirenMap);
+                sirenMarkerLayers.push(marker);
+            }
+        }
+
+        function updateRedPolygon(area, tightPolygon) {
+            if (!mapData) return;
+            let polyCoords = null;
+
+            if (tightPolygon && tightPolygon.length >= 3) {
+                polyCoords = tightPolygon;
+            } else {
+                const regionID = getRegionID(area);
+                if (regionID && mapData.REGION_POLYGONS[regionID]) {
+                    polyCoords = mapData.REGION_POLYGONS[regionID];
+                }
+            }
+
+            if (!polyCoords) return;
+
+            const existing = sirenPolyByArea[area];
+            if (existing) {
+                // Morph existing polygon to new coords (CSS transition animates the SVG path)
+                existing.setLatLngs(polyCoords);
+            } else {
+                // Create new polygon
+                const poly = L.polygon(polyCoords, {
+                    color: 'var(--red)',
+                    weight: 2,
+                    fillOpacity: 0.15,
+                    className: 'tactical-polygon-urgent'
+                }).addTo(sirenMap);
+                sirenPolyByArea[area] = poly;
+                sirenLayers.push(poly);
+            }
         }
 
         function setMapActive(active) {
@@ -1196,52 +1258,12 @@
             return null;
         }
 
-        function addMapMarker(name, isUrgent, tightPolygon = null) {
-            if (!mapData) return;
-
-            // Use pre-computed tight polygon from בדקות messages instead of the big regional shape
-            if (tightPolygon && tightPolygon.length >= 3) {
-                const poly = L.polygon(tightPolygon, {
-                    color: 'var(--red)',
-                    weight: 2,
-                    fillOpacity: 0.15,
-                    className: 'tactical-polygon-urgent',
-                }).addTo(sirenMap);
-                sirenLayers.push(poly);
-                return;
-            }
-
-            // Region polygon lookup first
-            const regionID = getRegionID(name);
-            const hasPolygon = regionID && mapData.REGION_POLYGONS[regionID];
-
-            if (hasPolygon && isUrgent) {
-                const polyData = mapData.REGION_POLYGONS[regionID];
-                const poly = L.polygon(polyData, {
-                    color: 'var(--red)',
-                    weight: 2,
-                    fillOpacity: 0.15,
-                    className: 'tactical-polygon-urgent'
-                }).addTo(sirenMap);
-                sirenLayers.push(poly);
-                return;
-            }
-
-            let coords = mapData.CITY_COORDS[name] || mapData.REGION_COORDS[name];
-            if (!coords) {
-                const stripped = name.replace(/^(צפון|דרום|מרכז|מזרח|מערב|אזור)\s*-?\s*/, '').trim();
-                coords = mapData.CITY_COORDS[stripped];
-            }
-
-            if (coords) {
-                const marker = L.marker(coords, { icon: createSirenIcon(isUrgent) }).addTo(sirenMap);
-                sirenLayers.push(marker);
-            }
-        }
-
         function clearSirenMarkers() {
             sirenLayers.forEach(l => sirenMap.removeLayer(l));
             sirenLayers = [];
+            sirenMarkerLayers.forEach(l => sirenMap.removeLayer(l));
+            sirenMarkerLayers = [];
+            sirenPolyByArea = {};
         }
 
         function clearTimers() {
