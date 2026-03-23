@@ -1081,6 +1081,7 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
         if _mock_state["key"] != mock_key:
             _mock_state["key"] = mock_key
             _mock_state["target_time"] = (now + timedelta(minutes=minutes)).isoformat()
+            _mock_state["start_time"] = now.isoformat()
 
         target_dt = datetime.fromisoformat(_mock_state["target_time"])
         clock_time = target_dt.strftime("%H:%M")
@@ -1104,14 +1105,17 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
             "source_channel": "mock",
             "text": text,
         }
+        # Delay mivzak data by 20s so the UI shows big polygon first, then shrinks
+        mock_start = datetime.fromisoformat(_mock_state["start_time"])
+        mivzak_ready = (now - mock_start).total_seconds() >= 20
         return {
             "has_data": True,
             "text": text,
             "received_at": now.isoformat(),
             "target_time": target_dt.isoformat(),
             "alerts": [alert],
-            "mivzak_replacements": active_mivzak,
-            "mivzak_polygons": active_mivzak_polygons,
+            "mivzak_replacements": active_mivzak if mivzak_ready else {},
+            "mivzak_polygons": active_mivzak_polygons if mivzak_ready else {},
         }
     return {**latest_event, "mivzak_replacements": active_mivzak, "mivzak_polygons": active_mivzak_polygons}
 
