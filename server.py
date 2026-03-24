@@ -278,43 +278,26 @@ def compute_tight_polygon(place_names, buf=0.08):
     return _buffer_polygon(_convex_hull(coords), buf=buf)
 
 
-def _smooth_polygon(points, segments_per_edge=8):
-    """Round polygon corners into smooth curves.
 
-    For each triplet of consecutive vertices (A, B, C), replace the corner at B
-    with an arc. The arc starts ~30% of the way from B toward A, curves through
-    a control point near B, and ends ~30% from B toward C.
+def compute_smooth_polygon(place_names, padding=0.08, n_points=48):
+    """Compute a smooth circle/ellipse that encompasses all given cities.
+
+    Finds the centroid and radius of the city cluster, adds padding,
+    and generates a circle polygon.
     """
-    n = len(points)
-    if n < 3:
-        return points
-    result = []
-    for i in range(n):
-        a = points[(i - 1) % n]
-        b = points[i]
-        c = points[(i + 1) % n]
-        # Pull control point inward so arcs don't overshoot
-        r = 0.3
-        start = [b[0] + r * (a[0] - b[0]), b[1] + r * (a[1] - b[1])]
-        end = [b[0] + r * (c[0] - b[0]), b[1] + r * (c[1] - b[1])]
-        for j in range(segments_per_edge):
-            t = j / segments_per_edge
-            # Quadratic bezier: start -> b (control) -> end
-            s = 1 - t
-            lat = s * s * start[0] + 2 * s * t * b[0] + t * t * end[0]
-            lon = s * s * start[1] + 2 * s * t * b[1] + t * t * end[1]
-            result.append([round(lat, 6), round(lon, 6)])
-    return result
-
-
-def compute_smooth_polygon(place_names, buf=0.12):
-    """Like compute_tight_polygon but with rounded corners and bigger buffer."""
+    import math
     coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
     if not coords:
         return None
-    hull = _convex_hull(coords)
-    buffered = _buffer_polygon(hull, buf=buf)
-    return _smooth_polygon(buffered)
+    clat = sum(c[0] for c in coords) / len(coords)
+    clon = sum(c[1] for c in coords) / len(coords)
+    max_dist = max(((c[0] - clat) ** 2 + (c[1] - clon) ** 2) ** 0.5 for c in coords)
+    radius = max(max_dist + padding, 0.06)  # minimum visible size
+    return [
+        [round(clat + radius * math.sin(2 * math.pi * i / n_points), 6),
+         round(clon + radius * math.cos(2 * math.pi * i / n_points), 6)]
+        for i in range(n_points)
+    ]
 
 
 def clean_hebrew_city(city_name):
