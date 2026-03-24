@@ -908,7 +908,7 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
             # calculate target time
             a_target_time = None
             if a.get("clock_time"):
-                target_dt = get_target_datetime(a["clock_time"], reference_time=msg_dt if is_init else None)
+                target_dt = get_target_datetime(a["clock_time"], reference_time=msg_dt)
                 a_target_time = target_dt.isoformat()
             elif a.get("expected_seconds") is not None:
                 target_dt = msg_dt + timedelta(seconds=a["expected_seconds"])
