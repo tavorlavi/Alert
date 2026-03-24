@@ -148,19 +148,30 @@ def _to_expected_seconds(expected_time_text):
     return int(value)
 
 KNOWN_AREAS = [
-    "מרכז", "צפון", "דרום", "עוטף עזה", "שרון", "שפלה", "גוש דן",
+    "מרכז", "צפון", "דרום", "ירושלים", "אילת", "עוטף עזה", "שרון", "שפלה", "גוש דן",
     "יהודה", "הגליל", "גליל", "הגולן", "גולן", "קריות", "עמק יזרעאל",
     "ים המלח", "הערבה", "מפרץ", "בקעה", "המדבר", "גליל עליון",
-    "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון"
+    "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון",
+    "לכיש", "נגב", "מערב הנגב", "מרכז הנגב"
 ]
 
 TACTICAL_REGION_MAPPING = {
     "באר שבע": "דרום", "דימונה": "דרום", "אשדוד": "דרום", "אשקלון": "דרום",
-    "נתיבות": "דרום", "שדרות": "דרום", "אילת": "דרום", "אופקים": "דרום",
+    "נתיבות": "דרום", "שדרות": "דרום", "אופקים": "דרום",
     "תל אביב": "מרכז", "ראשון לציון": "מרכז", "חולון": "מרכז", "רמת גן": "מרכז",
-    "פתח תקווה": "מרכז", "הרצליה": "מרכז", "נתניה": "שרון", "כפר סבא": "שרון",
+    "פתח תקווה": "מרכז", "הרצליה": "מרכז", "נתניה": "מרכז", "כפר סבא": "מרכז",
     "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
     "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון"
+}
+
+AREA_NORMALIZATION = {
+    "הגליל": "צפון", "גליל": "צפון", "הגולן": "צפון", "גולן": "צפון",
+    "קריות": "צפון", "עמק יזרעאל": "צפון",
+    "מפרץ": "צפון", "גליל עליון": "צפון", "גליל תחתון": "צפון",
+    "גליל מערבי": "צפון", "מירון": "צפון", "כיש": "צפון", "בקעה": "צפון",
+    "שרון": "מרכז", "שפלה": "מרכז", "גוש דן": "מרכז", "יהודה": "מרכז", "שומרון": "מרכז",
+    "עוטף עזה": "דרום", "עוטף": "דרום", "ים המלח": "דרום", "הערבה": "דרום", "המדבר": "דרום",
+    "לכיש": "דרום", "נגב": "דרום", "מערב הנגב": "דרום", "מרכז הנגב": "דרום",
 }
 
 # Inverted: region → list of specific cities (for oref mock expansion)
@@ -309,7 +320,7 @@ def _smooth_polygon(points, segments_per_edge=8):
 
 def compute_smooth_polygon(place_names, buf=0.12):
     """Like compute_tight_polygon but with rounded corners and bigger buffer."""
-    coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
+    coords = [tuple(c) for n in place_names if (c := _resolve_city_coords(n))]
     if not coords:
         return None
     hull = _convex_hull(coords)
@@ -331,7 +342,7 @@ def extract_areas_from_text(text):
     seen = set()
     
     # Exclude common non-area words
-    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע"}
+    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות"}
     
     for line in text.split("\n"):
         line = line.strip()
@@ -396,7 +407,7 @@ def extract_forecast_data(text):
     alerts = []
     
     # Exclude common non-area words
-    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו"}
+    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו", "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות"}
     
     lines = re.split(r'\n|\.\s+', text)
     
@@ -587,25 +598,46 @@ def parse_oref_mivzak(text: str) -> list[str] | None:
         line = line.strip()
         if not line:
             continue
-        if (line.startswith("\U0001f6a8") or line.startswith("אזור ")
+        if (line.startswith("\U0001f6a8")
+                or (line.startswith("אזור ") and ',' not in line)
                 or "בדקות הקרובות" in line or "על תושבי" in line
-                or "במקרה של" in line):
+                or "במקרה של" in line or "היכנסו למרחב" in line):
             continue
         cities.extend(c.strip() for c in line.split(',') if c.strip())
     return cities if cities else None
 
 
+def _resolve_city_coords(city: str):
+    """Look up city coordinates, trying exact match then stripping suffix."""
+    if city in CITY_COORDS_LOOKUP:
+        return CITY_COORDS_LOOKUP[city]
+    base = city.split(" - ")[0].strip()
+    if base in CITY_COORDS_LOOKUP:
+        return CITY_COORDS_LOOKUP[base]
+    return None
+
+
+def _region_from_lat(lat: float) -> str:
+    if lat >= 32.5:
+        return "צפון"
+    if lat >= 31.3:
+        return "מרכז"
+    return "דרום"
+
+
 def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], dict[str, list]]:
     """Build {region: [cities]} and {region: polygon} from מבזק city list.
 
-    Groups cities by region via TACTICAL_REGION_MAPPING, then computes a tight
-    polygon for each region's cities.
-    Returns (replacements, polygons).
+    Looks up each city in CITY_COORDS_LOOKUP (with suffix fallback),
+    groups by latitude into broad regions (צפון/מרכז/דרום),
+    then computes a tight polygon per region.
     """
     replacements: dict[str, list[str]] = {}
     for city in cities:
-        region = TACTICAL_REGION_MAPPING.get(city)
-        if region:
+        coords = _resolve_city_coords(city)
+        if coords:
+            lat = coords[0] if isinstance(coords, (list, tuple)) else coords
+            region = _region_from_lat(lat)
             replacements.setdefault(region, []).append(city)
     polygons: dict[str, list] = {}
     for region, region_cities in replacements.items():
@@ -613,6 +645,18 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
         if poly:
             polygons[region] = poly
     return replacements, polygons
+
+
+def merge_mivzak(replacements: dict[str, list[str]]):
+    """Merge mivzak data into active state, accumulating cities across messages."""
+    for region, cities in replacements.items():
+        existing = active_mivzak.get(region, [])
+        active_mivzak[region] = list(dict.fromkeys(existing + cities))
+    # Recompute polygons with merged city lists
+    for region, cities in active_mivzak.items():
+        poly = compute_smooth_polygon(cities)
+        if poly:
+            active_mivzak_polygons[region] = poly
 
 
 # ==========================
@@ -916,6 +960,11 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 
             a["target_time"] = a_target_time
             
+            # Normalize areas to broad regions (צפון/מרכז/דרום)
+            a["areas"] = list(dict.fromkeys(
+                AREA_NORMALIZATION.get(area, area) for area in a["areas"]
+            ))
+
             # Update active alerts by area
             for area in a["areas"]:
                 forecast_areas_for_history.append(area)
@@ -1312,9 +1361,8 @@ async def debug_load_messages():
                 continue
             mivzak_cities = parse_oref_mivzak(text)
             if mivzak_cities:
-                replacements, polygons = build_mivzak_replacements(mivzak_cities)
-                active_mivzak.update(replacements)
-                active_mivzak_polygons.update(polygons)
+                replacements, _ = build_mivzak_replacements(mivzak_cities)
+                merge_mivzak(replacements)
         print(f"🐞 DEBUG: Loaded {len(MOCK_OREF_MESSAGES)} mock oref messages.")
 
     except Exception as e:
@@ -1387,9 +1435,8 @@ async def oref_polling_loop():
 
                         mivzak_cities = parse_oref_mivzak(text)
                         if mivzak_cities:
-                            replacements, polygons = build_mivzak_replacements(mivzak_cities)
-                            active_mivzak.update(replacements)
-                            active_mivzak_polygons.update(polygons)
+                            replacements, _ = build_mivzak_replacements(mivzak_cities)
+                            merge_mivzak(replacements)
                             continue
 
                         if "האירוע הסתיים" in text:
