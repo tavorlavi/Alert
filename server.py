@@ -279,25 +279,82 @@ def compute_tight_polygon(place_names, buf=0.08):
 
 
 
-def compute_smooth_polygon(place_names, padding=0.08, n_points=48):
-    """Compute a smooth circle/ellipse that encompasses all given cities.
+def _offset_hull(hull, dist, arc_points=8):
+    """Compute a proper Minkowski offset of a convex hull.
 
-    Finds the centroid and radius of the city cluster, adds padding,
-    and generates a circle polygon.
+    Offsets each edge outward by `dist` degrees, then connects consecutive
+    offset edges with circular arcs at the corners. This produces a natural
+    shape that follows the city cluster's actual geometry: elongated clusters
+    become capsule/stadium shapes, triangular clusters become rounded triangles.
     """
     import math
+    n = len(hull)
+    if n < 2:
+        lat, lon = hull[0]
+        return [[round(lat + dist * math.sin(2 * math.pi * i / 32), 6),
+                 round(lon + dist * math.cos(2 * math.pi * i / 32), 6)]
+                for i in range(32)]
+
+    # For 2 points (line), make a stadium/capsule
+    if n == 2:
+        hull = hull + [hull[0]]  # close it so edge logic works
+        n = 3
+
+    # Compute outward normal for each edge
+    edges = []
+    for i in range(n):
+        x1, y1 = hull[i]
+        x2, y2 = hull[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        length = (dx ** 2 + dy ** 2) ** 0.5
+        if length < 1e-10:
+            continue
+        nx, ny = -dy / length, dx / length
+        edges.append((x1, y1, x2, y2, nx, ny))
+
+    if not edges:
+        return None
+
+    result = []
+    ne = len(edges)
+    for i in range(ne):
+        _, _, _, _, n1x, n1y = edges[i]
+        e2_x1, e2_y1, _, _, n2x, n2y = edges[(i + 1) % ne]
+
+        # Corner point (vertex between edge i and edge i+1)
+        cx, cy = e2_x1, e2_y1
+
+        # Arc from normal direction of edge i to normal direction of edge i+1
+        angle1 = math.atan2(n1x, n1y)
+        angle2 = math.atan2(n2x, n2y)
+        # Ensure we go counterclockwise
+        if angle2 < angle1:
+            angle2 += 2 * math.pi
+        if angle2 - angle1 > math.pi + 0.01:
+            angle2 -= 2 * math.pi
+
+        for j in range(arc_points):
+            t = j / arc_points
+            a = angle1 + (angle2 - angle1) * t
+            result.append([
+                round(cx + dist * math.sin(a), 6),
+                round(cy + dist * math.cos(a), 6),
+            ])
+
+    return result
+
+
+def compute_smooth_polygon(place_names, padding=0.07):
+    """Compute a smooth offset polygon around the given cities.
+
+    Uses proper Minkowski offset: parallel edges + circular arcs at corners.
+    The shape naturally follows the city cluster geometry.
+    """
     coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
     if not coords:
         return None
-    clat = sum(c[0] for c in coords) / len(coords)
-    clon = sum(c[1] for c in coords) / len(coords)
-    max_dist = max(((c[0] - clat) ** 2 + (c[1] - clon) ** 2) ** 0.5 for c in coords)
-    radius = max(max_dist + padding, 0.06)  # minimum visible size
-    return [
-        [round(clat + radius * math.sin(2 * math.pi * i / n_points), 6),
-         round(clon + radius * math.cos(2 * math.pi * i / n_points), 6)]
-        for i in range(n_points)
-    ]
+    hull = _convex_hull(coords)
+    return _offset_hull(hull, padding)
 
 
 def clean_hebrew_city(city_name):
