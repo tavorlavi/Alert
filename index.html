@@ -918,34 +918,33 @@
 
         /* Tactical Polygon Styling */
         .tactical-polygon-urgent {
-            filter: drop-shadow(0 0 6px rgba(255, 50, 50, 0.6));
-            pointer-events: none;
-        }
-
-        .tactical-polygon-outer {
-            filter: drop-shadow(0 0 12px rgba(255, 50, 50, 0.3));
+            filter: drop-shadow(0 0 8px var(--red));
             pointer-events: none;
         }
 
         @keyframes poly-glow {
-            0%   { fill-opacity: 0.08; stroke-opacity: 0.7; }
-            50%  { fill-opacity: 0.18; stroke-opacity: 1; }
-            100% { fill-opacity: 0.08; stroke-opacity: 0.7; }
-        }
+            0% {
+                fill-opacity: 0.1;
+                stroke-opacity: 0.6;
+            }
 
-        @keyframes poly-glow-outer {
-            0%   { fill-opacity: 0.03; stroke-opacity: 0.3; }
-            50%  { fill-opacity: 0.08; stroke-opacity: 0.5; }
-            100% { fill-opacity: 0.03; stroke-opacity: 0.3; }
+            50% {
+                fill-opacity: 0.25;
+                stroke-opacity: 1;
+            }
+
+            100% {
+                fill-opacity: 0.1;
+                stroke-opacity: 0.6;
+            }
         }
 
         .tactical-polygon-urgent path {
-            animation: poly-glow 2.5s infinite ease-in-out;
+            animation: poly-glow 2s infinite ease-in-out;
         }
 
-        .tactical-polygon-outer path {
-            animation: poly-glow-outer 2.5s infinite ease-in-out;
-            stroke-dasharray: 8 4;
+        .tactical-polygon-shrink path {
+            transition: d 1.5s ease-in-out, fill-opacity 1.5s ease-in-out;
         }
 
         .tactical-polygon-fadeout {
@@ -1182,12 +1181,11 @@
             });
 
             // Fade out polygons for areas no longer active
-            for (const [area, layers] of Object.entries(sirenPolyByArea)) {
+            for (const [area, layer] of Object.entries(sirenPolyByArea)) {
                 if (!activeAreas.has(area)) {
-                    [layers.inner, layers.outer].forEach(l => {
-                        l.getElement()?.classList.add('tactical-polygon-fadeout');
-                        setTimeout(() => { sirenMap.removeLayer(l); }, 1200);
-                    });
+                    layer.getElement()?.classList.add('tactical-polygon-fadeout');
+                    const lyr = layer;
+                    setTimeout(() => { sirenMap.removeLayer(lyr); }, 1200);
                     delete sirenPolyByArea[area];
                 }
             }
@@ -1263,25 +1261,17 @@
 
             const existing = sirenPolyByArea[area];
             if (existing) {
-                animatePolygon(existing.inner, polyCoords, 1500);
-                animatePolygon(existing.outer, polyCoords, 1800);
+                animatePolygon(existing, polyCoords, 1500);
             } else {
-                const inner = L.polygon(polyCoords, {
-                    color: '#ff3333',
-                    weight: 1.5,
-                    fillColor: '#ff2222',
-                    fillOpacity: 0.12,
+                // Create new polygon
+                const poly = L.polygon(polyCoords, {
+                    color: 'var(--red)',
+                    weight: 2,
+                    fillOpacity: 0.15,
                     className: 'tactical-polygon-urgent'
                 }).addTo(sirenMap);
-                const outer = L.polygon(polyCoords, {
-                    color: '#ff4444',
-                    weight: 1,
-                    fillColor: '#ff2222',
-                    fillOpacity: 0.04,
-                    className: 'tactical-polygon-outer'
-                }).addTo(sirenMap);
-                sirenPolyByArea[area] = { inner, outer };
-                sirenLayers.push(inner, outer);
+                sirenPolyByArea[area] = poly;
+                sirenLayers.push(poly);
             }
         }
 

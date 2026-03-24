@@ -278,83 +278,43 @@ def compute_tight_polygon(place_names, buf=0.08):
     return _buffer_polygon(_convex_hull(coords), buf=buf)
 
 
+def _smooth_polygon(points, segments_per_edge=8):
+    """Round polygon corners into smooth curves.
 
-def _offset_hull(hull, dist, arc_points=8):
-    """Compute a proper Minkowski offset of a convex hull.
-
-    Offsets each edge outward by `dist` degrees, then connects consecutive
-    offset edges with circular arcs at the corners. This produces a natural
-    shape that follows the city cluster's actual geometry: elongated clusters
-    become capsule/stadium shapes, triangular clusters become rounded triangles.
+    For each triplet of consecutive vertices (A, B, C), replace the corner at B
+    with an arc. The arc starts ~30% of the way from B toward A, curves through
+    a control point near B, and ends ~30% from B toward C.
     """
-    import math
-    n = len(hull)
-    if n < 2:
-        lat, lon = hull[0]
-        return [[round(lat + dist * math.sin(2 * math.pi * i / 32), 6),
-                 round(lon + dist * math.cos(2 * math.pi * i / 32), 6)]
-                for i in range(32)]
-
-    # For 2 points (line), make a stadium/capsule
-    if n == 2:
-        hull = hull + [hull[0]]  # close it so edge logic works
-        n = 3
-
-    # Compute outward normal for each edge
-    edges = []
-    for i in range(n):
-        x1, y1 = hull[i]
-        x2, y2 = hull[(i + 1) % n]
-        dx, dy = x2 - x1, y2 - y1
-        length = (dx ** 2 + dy ** 2) ** 0.5
-        if length < 1e-10:
-            continue
-        nx, ny = -dy / length, dx / length
-        edges.append((x1, y1, x2, y2, nx, ny))
-
-    if not edges:
-        return None
-
+    n = len(points)
+    if n < 3:
+        return points
     result = []
-    ne = len(edges)
-    for i in range(ne):
-        _, _, _, _, n1x, n1y = edges[i]
-        e2_x1, e2_y1, _, _, n2x, n2y = edges[(i + 1) % ne]
-
-        # Corner point (vertex between edge i and edge i+1)
-        cx, cy = e2_x1, e2_y1
-
-        # Arc from normal direction of edge i to normal direction of edge i+1
-        angle1 = math.atan2(n1x, n1y)
-        angle2 = math.atan2(n2x, n2y)
-        # Ensure we go counterclockwise
-        if angle2 < angle1:
-            angle2 += 2 * math.pi
-        if angle2 - angle1 > math.pi + 0.01:
-            angle2 -= 2 * math.pi
-
-        for j in range(arc_points):
-            t = j / arc_points
-            a = angle1 + (angle2 - angle1) * t
-            result.append([
-                round(cx + dist * math.sin(a), 6),
-                round(cy + dist * math.cos(a), 6),
-            ])
-
+    for i in range(n):
+        a = points[(i - 1) % n]
+        b = points[i]
+        c = points[(i + 1) % n]
+        # Pull control point inward so arcs don't overshoot
+        r = 0.3
+        start = [b[0] + r * (a[0] - b[0]), b[1] + r * (a[1] - b[1])]
+        end = [b[0] + r * (c[0] - b[0]), b[1] + r * (c[1] - b[1])]
+        for j in range(segments_per_edge):
+            t = j / segments_per_edge
+            # Quadratic bezier: start -> b (control) -> end
+            s = 1 - t
+            lat = s * s * start[0] + 2 * s * t * b[0] + t * t * end[0]
+            lon = s * s * start[1] + 2 * s * t * b[1] + t * t * end[1]
+            result.append([round(lat, 6), round(lon, 6)])
     return result
 
 
-def compute_smooth_polygon(place_names, padding=0.07):
-    """Compute a smooth offset polygon around the given cities.
-
-    Uses proper Minkowski offset: parallel edges + circular arcs at corners.
-    The shape naturally follows the city cluster geometry.
-    """
+def compute_smooth_polygon(place_names, buf=0.12):
+    """Like compute_tight_polygon but with rounded corners and bigger buffer."""
     coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
     if not coords:
         return None
     hull = _convex_hull(coords)
-    return _offset_hull(hull, padding)
+    buffered = _buffer_polygon(hull, buf=buf)
+    return _smooth_polygon(buffered)
 
 
 def clean_hebrew_city(city_name):
