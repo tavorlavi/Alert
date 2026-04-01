@@ -110,58 +110,113 @@ def extract_time_from_text(text):
 
 def clean_forecast_text(text):
     """Remove URLs and extra whitespace from forecast display text."""
-    # Remove Telegram URLs
-    text = re.sub(r'https?://t\.me/\S*', '', text)
+    # Remove Telegram URLs (with or without https:// prefix)
+    text = re.sub(r'(?:https?://)?t\.me/\S*', '', text)
     # Remove extra newlines and whitespace  
     text = re.sub(r'\n{2,}', '\n', text).strip()
     return text
 
+_MINUTE_UNITS = ("דקות", "דקה", "דק")
+_SECOND_UNITS = ("שניות", "שניה")
+_ALL_UNITS = "|".join(_MINUTE_UNITS + _SECOND_UNITS)
+
+# Compiled patterns for duration extraction, ordered most-specific first
+_DURATION_PATTERNS = [
+    # "6 וחצי דקות" / "2 וחצי שניות"
+    re.compile(r'(\d+(?:\.\d+)?)\s*וחצי\s*(' + _ALL_UNITS + ')'),
+    # "דקה וחצי" / "שניה וחצי"
+    re.compile(r'(דקה|שניה)\s*וחצי'),
+    # "3/4 דקות" range notation
+    re.compile(r'(\d+)\s*/\s*(\d+)\s*(' + _ALL_UNITS + ')'),
+    # Standard: "5 דקות", "5.5 דק", "35 שניות"
+    re.compile(r'(\d+(?:\.\d+)?)\s*(' + _ALL_UNITS + ')'),
+    # Bare unit: "דקה", "דקות", "שניות"
+    re.compile(r'(' + _ALL_UNITS + ')'),
+]
+
+# Combined pattern for stripping durations from text (used in area extraction)
+DURATION_STRIP_RE = re.compile(
+    r'(?:\d+(?:\.\d+)?\s*וחצי\s*(?:' + _ALL_UNITS + '))'
+    r'|(?:(?:דקה|שניה)\s*וחצי)'
+    r'|(?:\d+\s*/\s*\d+\s*(?:' + _ALL_UNITS + '))'
+    r'|(?:(?:\d+(?:\.\d+)?)\s*)?(?:' + _ALL_UNITS + ')'
+)
+
 def extract_expected_time_text(text):
-    """Extract expected duration expressions like '5 דקות' or '35 שניות' or '4.5 דקות'."""
-    m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', text)
-    if not m:
-        return None
-    num = m.group(1)
-    unit = m.group(2)
-    if num:
-        return f"{num} {unit}"
-    else:
-        return unit
+    """Extract expected duration expressions like '5 דקות', '35 שניות', '4.5 דק', 'דקה וחצי'."""
+    for pat in _DURATION_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return m.group(0)
+    return None
 
 def _to_expected_seconds(expected_time_text):
     if not expected_time_text:
         return None
-    m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', expected_time_text)
-    if not m:
-        return None
-    
-    num_str = m.group(1)
-    unit = m.group(2)
-    
-    if num_str:
-        value = float(num_str)
-    else:
-        value = 1.0 # default for "דקה" or "שניה"
-        
-    if unit in ("דקות", "דקה"):
-        return int(value * 60)
-    return int(value)
+
+    # "X וחצי UNIT"
+    m = _DURATION_PATTERNS[0].search(expected_time_text)
+    if m:
+        value = float(m.group(1)) + 0.5
+        unit = m.group(2)
+        if unit in _MINUTE_UNITS:
+            return int(value * 60)
+        return int(value)
+
+    # "דקה וחצי" / "שניה וחצי"
+    m = _DURATION_PATTERNS[1].search(expected_time_text)
+    if m:
+        unit = m.group(1)
+        if unit == "דקה":
+            return 90
+        return 1  # שניה וחצי ≈ 1s (unlikely but safe)
+
+    # "X/Y UNIT" - take the higher number (safety margin)
+    m = _DURATION_PATTERNS[2].search(expected_time_text)
+    if m:
+        value = float(max(int(m.group(1)), int(m.group(2))))
+        unit = m.group(3)
+        if unit in _MINUTE_UNITS:
+            return int(value * 60)
+        return int(value)
+
+    # Standard "X UNIT"
+    m = _DURATION_PATTERNS[3].search(expected_time_text)
+    if m:
+        value = float(m.group(1))
+        unit = m.group(2)
+        if unit in _MINUTE_UNITS:
+            return int(value * 60)
+        return int(value)
+
+    # Bare unit "דקה" / "שניה"
+    m = _DURATION_PATTERNS[4].search(expected_time_text)
+    if m:
+        unit = m.group(1)
+        if unit in _MINUTE_UNITS:
+            return 60
+        return 1
+
+    return None
 
 KNOWN_AREAS = [
     "מרכז", "צפון", "דרום", "ירושלים", "אילת", "עוטף עזה", "שרון", "שפלה", "גוש דן",
     "יהודה", "הגליל", "גליל", "הגולן", "גולן", "קריות", "עמק יזרעאל",
     "ים המלח", "הערבה", "מפרץ", "בקעה", "המדבר", "גליל עליון",
     "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון",
-    "לכיש", "נגב", "מערב הנגב", "מרכז הנגב"
+    "לכיש", "נגב", "מערב הנגב", "מרכז הנגב",
+    "העמקים", "עמקים", "כינרת", "מישור החוף",
 ]
 
 TACTICAL_REGION_MAPPING = {
     "באר שבע": "דרום", "דימונה": "דרום", "אשדוד": "דרום", "אשקלון": "דרום",
-    "נתיבות": "דרום", "שדרות": "דרום", "אופקים": "דרום",
+    "נתיבות": "דרום", "שדרות": "דרום", "אופקים": "דרום", "ערד": "דרום",
     "תל אביב": "מרכז", "ראשון לציון": "מרכז", "חולון": "מרכז", "רמת גן": "מרכז",
     "פתח תקווה": "מרכז", "הרצליה": "מרכז", "נתניה": "מרכז", "כפר סבא": "מרכז",
+    "מודיעין": "מרכז", "יפו": "מרכז",
+    "בית שמש": "ירושלים",
     "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
-    "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון"
+    "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון", "חצור": "צפון",
 }
 
 AREA_NORMALIZATION = {
@@ -169,9 +224,31 @@ AREA_NORMALIZATION = {
     "קריות": "צפון", "עמק יזרעאל": "צפון",
     "מפרץ": "צפון", "גליל עליון": "צפון", "גליל תחתון": "צפון",
     "גליל מערבי": "צפון", "מירון": "צפון", "כיש": "צפון", "בקעה": "צפון",
+    "העמקים": "צפון", "עמקים": "צפון", "כינרת": "צפון",
     "שרון": "מרכז", "שפלה": "מרכז", "גוש דן": "מרכז", "יהודה": "מרכז", "שומרון": "מרכז",
+    "מישור החוף": "מרכז",
     "עוטף עזה": "דרום", "עוטף": "דרום", "ים המלח": "דרום", "הערבה": "דרום", "המדבר": "דרום",
     "לכיש": "דרום", "נגב": "דרום", "מערב הנגב": "דרום", "מרכז הנגב": "דרום",
+}
+
+EXCLUDE_WORDS = {
+    "שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש",
+    "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו", "זוהה",
+    "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות",
+    "להתמגן", "התמגן", "תתמגנו", "השמרו",
+    "מצרר", "מצררים",
+    "נפילה", "נפילות", "נפתח", "נפתחים",
+    "טיל", "טילי", "טילים",
+    "לערך", "בערך", "ערך",
+}
+
+HEBREW_ABBREVIATIONS = {
+    'ב"ש': "באר שבע", 'ב״ש': "באר שבע",
+    'פ"ת': "פתח תקווה", 'פ״ת': "פתח תקווה",
+    'ת"א': "תל אביב", 'ת״א': "תל אביב",
+    'ר"ג': "רמת גן", 'ר״ג': "רמת גן",
+    'ק"ש': "קרית שמונה", 'ק״ש': "קרית שמונה",
+    'ר"ל': "ראשון לציון", 'ר״ל': "ראשון לציון",
 }
 
 # Inverted: region → list of specific cities (for oref mock expansion)
@@ -281,7 +358,7 @@ def _buffer_polygon(hull, buf=0.08):
     return result
 
 
-def compute_tight_polygon(place_names, buf=0.08):
+def compute_tight_polygon(place_names, buf=0.03):
     """Return a buffered convex hull polygon for the given city names, or None."""
     coords = [tuple(CITY_COORDS_LOOKUP[n]) for n in place_names if n in CITY_COORDS_LOOKUP]
     if not coords:
@@ -318,8 +395,8 @@ def _smooth_polygon(points, segments_per_edge=8):
     return result
 
 
-def compute_smooth_polygon(place_names, buf=0.12):
-    """Like compute_tight_polygon but with rounded corners and bigger buffer."""
+def compute_smooth_polygon(place_names, buf=0.04):
+    """Like compute_tight_polygon but with rounded corners and tighter buffer."""
     coords = [tuple(c) for n in place_names if (c := _resolve_city_coords(n))]
     if not coords:
         return None
@@ -341,31 +418,33 @@ def extract_areas_from_text(text):
     areas = []
     seen = set()
     
-    # Exclude common non-area words
-    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות"}
-    
     for line in text.split("\n"):
         line = line.strip()
         if not line:
             continue
         if any(skip in line for skip in [
-            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים"
+            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים"
         ]):
             continue
-            
+
         # Skip lines that are clearly purely metadata lines
         if line.startswith("צפי") and len(line) < 15:
             continue
-            
+
+        # Expand Hebrew abbreviations before punctuation strip removes quotes
+        for abbr, full in HEBREW_ABBREVIATIONS.items():
+            if abbr in line:
+                line = line.replace(abbr, full)
+
         # Strip exact time formats and time units so they don't become areas
         line = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line)
-        line = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line)
-        line = re.sub(r'צפי|משך|עוד|לאזעקה|כעת|כרגע|לכרגע', '', line)
+        line = DURATION_STRIP_RE.sub('', line)
+        line = re.sub(r'צפי|משך|עוד|וחצי|לאזעקה|לאזעקות|כעת|כרגע|לכרגע|מיקוד|מרחב', '', line)
         line = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line)  # strip emojis
-        
+
         for part in re.split(r'[,/|\-\n]', line):
             part = re.sub(r'\(.*?\)', '', part).strip()
-            
+
             for city, region in TACTICAL_REGION_MAPPING.items():
                 if city in part:
                     part = part.replace(city, region)
@@ -385,9 +464,9 @@ def extract_areas_from_text(text):
 
             if not found_known:
                 # Remove excluded words
-                words = [w for w in part.split() if w not in exclude_words and w != "ו"]
+                words = [w for w in part.split() if w not in EXCLUDE_WORDS and w != "ו"]
                 cleaned_area = " ".join(words).strip()
-                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|גם\sל|גם\sב|גם\s|ל|ב)', '', cleaned_area).strip()
+                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|מיקוד\s|מרחב\s|גם\sל|גם\sב|גם\s|ל|ב)', '', cleaned_area).strip()
                 
                 # Short generic words aren't areas usually
                 if not cleaned_area or len(cleaned_area) < 2 or len(cleaned_area.split()) > 3:
@@ -405,10 +484,7 @@ def extract_forecast_data(text):
     Each alert is: {"areas": [...], "clock_time": str, "expected_time_text": str, "expected_seconds": int}
     """
     alerts = []
-    
-    # Exclude common non-area words
-    exclude_words = {"שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש", "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו", "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות"}
-    
+
     lines = re.split(r'\n|\.\s+', text)
     
     global_clock_time = None
@@ -419,24 +495,27 @@ def extract_forecast_data(text):
         if not line: continue
             
         if any(skip in line.lower() for skip in [
-            "http://", "https://", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים",
-            "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "מיקוד", "ארוך טווח"
+            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים",
+            "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "ארוך טווח"
         ]):
             continue
-            
+
         clock_m = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', line)
         line_clock_time = clock_m.group(1) if clock_m else None
-        
-        expected_m = re.search(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', line)
-        line_expected_text = expected_m.group(0) if expected_m else None
-        
+
+        line_expected_text = extract_expected_time_text(line)
+
         if line_clock_time: global_clock_time = line_clock_time
         if line_expected_text: global_expected_text = line_expected_text
-            
+
         line_clean = line
+        # Expand Hebrew abbreviations before punctuation strip removes quotes
+        for abbr, full in HEBREW_ABBREVIATIONS.items():
+            if abbr in line_clean:
+                line_clean = line_clean.replace(abbr, full)
         line_clean = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line_clean)
-        line_clean = re.sub(r'(?:(\d+(?:\.\d+)?)\s*)?(דקות|דקה|שניות|שניה)', '', line_clean)
-        line_clean = re.sub(r'צפי|משך|עוד|לאזעקה', '', line_clean)
+        line_clean = DURATION_STRIP_RE.sub('', line_clean)
+        line_clean = re.sub(r'צפי|משך|עוד|וחצי|לאזעקה|לאזעקות|מיקוד|מרחב', '', line_clean)
         line_clean = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line_clean)  # strip emojis
         
         line_areas = []
@@ -1346,24 +1425,15 @@ async def debug_load_messages():
 
         print(f"🐞 DEBUG: Done! alert_history has {len(alert_history)} entries.")
 
-        # Load mock oref messages for מרכז replay
-        global active_oref_alerts, active_mivzak
-        mock_now = datetime.now(local_tz) - timedelta(seconds=10)
+        # Load mock oref mivzak data only (not siren alerts, to avoid fake green dots)
+        global active_mivzak
         for mock_msg in MOCK_OREF_MESSAGES:
             text = mock_msg["text"]
-            cities = parse_oref_siren_cities(text)
-            if cities:
-                active_oref_alerts.append({
-                    "id": mock_msg["id"],
-                    "cities": cities,
-                    "msg_dt": mock_now,
-                })
-                continue
             mivzak_cities = parse_oref_mivzak(text)
             if mivzak_cities:
                 replacements, _ = build_mivzak_replacements(mivzak_cities)
                 merge_mivzak(replacements)
-        print(f"🐞 DEBUG: Loaded {len(MOCK_OREF_MESSAGES)} mock oref messages.")
+        print(f"🐞 DEBUG: Loaded mivzak data from {len(MOCK_OREF_MESSAGES)} mock oref messages.")
 
     except Exception as e:
         import traceback

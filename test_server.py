@@ -164,3 +164,138 @@ def test_build_mivzak_replacements_unknown_cities():
     assert "מרכז" in replacements
     assert "תל אביב" in replacements["מרכז"]
     assert len(replacements) == 1
+
+
+# ==========================
+# Algorithm improvement regression tests
+# ==========================
+
+class TestUrlCleaning:
+    def test_clean_forecast_text_strips_bare_tme_url(self):
+        text = "שיגור למרכז\nt.me/beforeredalert"
+        cleaned = server.clean_forecast_text(text)
+        assert "t.me" not in cleaned
+
+    def test_clean_forecast_text_strips_https_tme_url(self):
+        text = "שיגור למרכז\nhttps://t.me/shigurimsh"
+        cleaned = server.clean_forecast_text(text)
+        assert "t.me" not in cleaned
+
+    def test_extract_areas_bare_tme_not_area(self):
+        text = "שיגורים למרכז\nt.me/beforeredalert"
+        areas = server.extract_areas_from_text(text)
+        assert "מרכז" in areas
+        assert "tme" not in areas
+        assert "beforeredalert" not in areas
+
+    def test_extract_forecast_data_bare_tme_not_area(self):
+        text = "שיגור למרכז עוד 5 דקות\nt.me/beforeredalert"
+        result = server.extract_forecast_data(text)
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "מרכז" in all_areas
+        assert "tme" not in all_areas
+        assert "beforeredalert" not in all_areas
+
+
+class TestDurationParsing:
+    def test_vahetzi_daka(self):
+        """דקה וחצי = 1.5 minutes = 90 seconds"""
+        assert server.extract_expected_time_text("דקה וחצי") == "דקה וחצי"
+        assert server._to_expected_seconds("דקה וחצי") == 90
+
+    def test_vahetzi_with_number(self):
+        """6 וחצי דקות = 6.5 minutes = 390 seconds"""
+        assert server._to_expected_seconds(server.extract_expected_time_text("6 וחצי דקות")) == 390
+
+    def test_vahetzi_in_sentence(self):
+        """Extract וחצי from a full message"""
+        text = "עוד דקה וחצי אזעקה במרכז"
+        result = server.extract_forecast_data(text)
+        valid = [a for a in result["alerts"] if a.get("expected_seconds")]
+        assert len(valid) > 0
+        assert valid[0]["expected_seconds"] == 90
+
+    def test_dak_abbreviation(self):
+        """7 דק = 7 minutes = 420 seconds"""
+        assert server.extract_expected_time_text("7 דק") == "7 דק"
+        assert server._to_expected_seconds("7 דק") == 420
+
+    def test_dak_decimal(self):
+        """5.5 דק = 5.5 minutes = 330 seconds"""
+        assert server._to_expected_seconds("5.5 דק") == 330
+
+    def test_range_notation(self):
+        """3/4 דקות = take max(3,4) = 4 minutes = 240 seconds"""
+        text = "3/4 דקות"
+        assert server._to_expected_seconds(server.extract_expected_time_text(text)) == 240
+
+    def test_standard_dakot_unchanged(self):
+        """Existing patterns still work"""
+        assert server._to_expected_seconds("5 דקות") == 300
+        assert server._to_expected_seconds("35 שניות") == 35
+        assert server._to_expected_seconds("4.5 דקות") == 270
+        assert server._to_expected_seconds("דקה") == 60
+
+
+class TestAreaExtraction:
+    def test_mikud_extracts_area(self):
+        """מיקוד should not block area extraction"""
+        result = server.extract_forecast_data("מיקוד דימונה")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "דרום" in all_areas
+
+    def test_mikud_prefix_stripped(self):
+        areas = server.extract_areas_from_text("מיקוד אזור נהריה")
+        assert "צפון" in areas
+        assert "מיקוד" not in areas
+
+    def test_merhav_prefix_stripped(self):
+        areas = server.extract_areas_from_text("מרחב שרון")
+        assert "שרון" in areas
+
+    def test_lehitmagen_not_area(self):
+        areas = server.extract_areas_from_text("מרכז להתמגן")
+        assert "מרכז" in areas
+        assert "להתמגן" not in areas
+        assert "התמגן" not in areas
+
+    def test_metzarer_not_area(self):
+        areas = server.extract_areas_from_text("מצרר להתמגן")
+        assert "מצרר" not in areas
+
+    def test_la_yufalu_skipped(self):
+        """Lines with לא יופעלו should be skipped entirely"""
+        areas = server.extract_areas_from_text("לא יופעלו אזעקות בדרום")
+        assert "דרום" not in areas
+
+    def test_beit_shemesh_maps_to_yerushalayim(self):
+        result = server.extract_forecast_data("שיגור לבית שמש")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "ירושלים" in all_areas
+
+    def test_modiin_maps_to_merkaz(self):
+        result = server.extract_forecast_data("שיגור למודיעין")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "מרכז" in all_areas
+
+    def test_kineret_recognized(self):
+        areas = server.extract_areas_from_text("שיגור לכינרת")
+        assert "כינרת" in areas
+
+    def test_haamakim_recognized(self):
+        areas = server.extract_areas_from_text("שיגור לעמקים")
+        assert "עמקים" in areas
+
+    def test_hebrew_abbreviation_beer_sheva(self):
+        areas = server.extract_areas_from_text('שיגור לב"ש')
+        assert "דרום" in areas
+
+    def test_hebrew_abbreviation_petach_tikva(self):
+        areas = server.extract_areas_from_text('שיגור לפ"ת')
+        assert "מרכז" in areas
+
+    def test_lerech_not_area(self):
+        """לערך (approximately) should not be extracted as an area"""
+        areas = server.extract_areas_from_text("7 דקות לערך")
+        assert "ערך" not in areas
+        assert "לערך" not in areas
