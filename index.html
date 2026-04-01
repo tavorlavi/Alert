@@ -916,45 +916,72 @@
             animation: blink 1.2s ease-in-out infinite;
         }
 
-        /* Tactical Polygon Styling */
-        .tactical-polygon-urgent {
-            filter: drop-shadow(0 0 8px var(--red));
+        /* Tactical Polygon Lifecycle Styling */
+        .tactical-polygon-forecast {
+            filter: drop-shadow(0 0 8px var(--amber));
             pointer-events: none;
         }
-
-        @keyframes poly-glow {
-            0% {
-                fill-opacity: 0.1;
-                stroke-opacity: 0.6;
-            }
-
-            50% {
-                fill-opacity: 0.25;
-                stroke-opacity: 1;
-            }
-
-            100% {
-                fill-opacity: 0.1;
-                stroke-opacity: 0.6;
-            }
+        .tactical-polygon-mivzak {
+            filter: drop-shadow(0 0 10px var(--red));
+            pointer-events: none;
         }
-
-        .tactical-polygon-urgent path {
-            animation: poly-glow 2s infinite ease-in-out;
+        .tactical-polygon-confirmed {
+            filter: drop-shadow(0 0 6px var(--phosphor));
+            pointer-events: none;
         }
-
-        .tactical-polygon-shrink path {
-            transition: d 1.5s ease-in-out, fill-opacity 1.5s ease-in-out;
+        .tactical-polygon-clear {
+            filter: none;
+            pointer-events: none;
+            transition: opacity 120s linear;
         }
-
-        .tactical-polygon-fadeout {
+        .tactical-polygon-clear.fading {
             opacity: 0;
-            transition: opacity 1.2s ease-out;
         }
+
+        @keyframes poly-glow-red {
+            0%   { fill-opacity: 0.1; stroke-opacity: 0.6; }
+            50%  { fill-opacity: 0.25; stroke-opacity: 1; }
+            100% { fill-opacity: 0.1; stroke-opacity: 0.6; }
+        }
+        @keyframes poly-glow-amber {
+            0%   { fill-opacity: 0.15; stroke-opacity: 0.7; }
+            50%  { fill-opacity: 0.35; stroke-opacity: 1; }
+            100% { fill-opacity: 0.15; stroke-opacity: 0.7; }
+        }
+        @keyframes poly-glow-green {
+            0%   { fill-opacity: 0.08; stroke-opacity: 0.5; }
+            50%  { fill-opacity: 0.2; stroke-opacity: 0.9; }
+            100% { fill-opacity: 0.08; stroke-opacity: 0.5; }
+        }
+
+        .tactical-polygon-forecast path { animation: poly-glow-amber 2s infinite ease-in-out; }
+        .tactical-polygon-mivzak path { animation: poly-glow-red 1.5s infinite ease-in-out; }
+        .tactical-polygon-confirmed path { animation: poly-glow-green 2.5s infinite ease-in-out; }
+        .tactical-polygon-clear path { fill-opacity: 0.06; stroke-opacity: 0.3; }
 
         .leaflet-overlay-pane svg path {
             transition: d 1.5s ease-in-out, fill-opacity 0.8s ease-in-out, stroke-opacity 0.8s ease-in-out, opacity 0.8s ease-in-out;
         }
+
+        /* Map Legend */
+        .map-legend {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 800;
+            background: rgba(2, 8, 5, 0.85);
+            border: 1px solid var(--p-border);
+            border-radius: 4px;
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.55rem;
+            color: var(--text);
+        }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .legend-dot { width: 8px; height: 8px; transform: rotate(45deg); flex-shrink: 0; }
     </style>
 </head>
 
@@ -1002,6 +1029,12 @@
             <div class="section-divider">מפת התרעות בזמן אמת // PIKUD HAOREF</div>
             <div class="map-section" id="map-section">
                 <div id="siren-map"></div>
+                <div class="map-legend">
+                    <div class="legend-item"><div class="legend-dot" style="background:#ff2233;box-shadow:0 0 4px #ff2233;"></div><span>מבזק</span></div>
+                    <div class="legend-item"><div class="legend-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00;"></div><span>שיגור</span></div>
+                    <div class="legend-item"><div class="legend-dot" style="background:#39ff14;box-shadow:0 0 4px #39ff14;"></div><span>אזעקה</span></div>
+                    <div class="legend-item"><div class="legend-dot" style="background:#555;"></div><span>תם</span></div>
+                </div>
                 <div class="map-status-bar">
                     <div class="map-status-pill" id="map-status-pill">
                         <div class="map-status-dot" id="map-dot"></div>
@@ -1069,12 +1102,19 @@
         let mapData = null;
         let sirenMap = null;
         let sirenLayers = [];
-        let sirenPolyByArea = {};  // area name → Leaflet polygon layer (persistent for transitions)
-        let sirenMarkerLayers = []; // green city markers (non-polygon)
+        let sirenPolyByArea = {};  // area name → { layer, lifecycle, timeout }
+        let sirenMarkerLayers = [];
         let lastOrefStr = null;
         window.urgentCities = new Set();
         window.urgentCityPolygons = new Map();
         window.mivzakCityLists = {};
+
+        const LIFECYCLE_STYLES = {
+            forecast:  { color: '#ffaa00', weight: 2, fillOpacity: 0.15, cls: 'tactical-polygon-forecast' },
+            mivzak:    { color: '#ff2233', weight: 2, fillOpacity: 0.25, cls: 'tactical-polygon-mivzak' },
+            confirmed: { color: '#39ff14', weight: 2, fillOpacity: 0.12, cls: 'tactical-polygon-confirmed' },
+            clear:     { color: '#555555', weight: 1, fillOpacity: 0.06, cls: 'tactical-polygon-clear' },
+        };
 
         async function loadMapData() {
             try {
@@ -1123,12 +1163,9 @@
             const color = isUrgent ? 'var(--red)' : 'var(--phosphor)';
             return L.divIcon({
                 className: 'siren-marker-icon',
-                html: `<div style="position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center;">
-                    <div style="position:absolute;width:10px;height:10px;background:${color};border-radius:50%;box-shadow:0 0 10px ${color};z-index:2;animation:blink 0.8s infinite;"></div>
-                    <div style="position:absolute;width:30px;height:30px;border:1.5px solid ${color};border-radius:50%;animation:radar-ping 1.5s infinite linear;opacity:0.6;"></div>
-                </div>`,
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
+                html: `<div style="width:8px;height:8px;background:${color};border-radius:50%;box-shadow:0 0 6px ${color}, 0 0 12px ${color};animation:blink 1.2s ease-in-out infinite;"></div>`,
+                iconSize: [8, 8],
+                iconAnchor: [4, 4]
             });
         }
 
@@ -1142,7 +1179,7 @@
 
             const orefEmpty = !orefData.data || orefData.data.length === 0;
             if (orefEmpty && window.urgentCities.size === 0) {
-                clearSirenMarkers();
+                transitionAllToClear();
                 setMapActive(false);
                 return;
             }
@@ -1154,21 +1191,19 @@
             const officialAreas = new Set(orefData.data || []);
             const forecastAreas = window.urgentCities || new Set();
             const activeAreas = new Set();
+            const mivzakCities = window.mivzakCityLists || {};
 
             // 1. Green city markers for oref-confirmed cities
-            officialAreas.forEach(area => {
-                addGreenMarker(area);
+            officialAreas.forEach(city => {
+                addGreenMarker(city);
             });
 
-            // 2. Red polygons for forecast areas
-            const mivzakCities = window.mivzakCityLists || {};
+            // 2. Forecast polygons with lifecycle
             forecastAreas.forEach(area => {
-                // Skip if oref confirmed all cities for this area
                 const expectedCities = mivzakCities[area];
                 if (expectedCities && expectedCities.length > 0) {
                     if (expectedCities.every(c => officialAreas.has(c))) return;
                 }
-                // Skip direct name overlap
                 let overlap = false;
                 officialAreas.forEach(oa => {
                     if (oa.includes(area) || area.includes(oa)) overlap = true;
@@ -1177,16 +1212,25 @@
 
                 activeAreas.add(area);
                 const tightPoly = window.urgentCityPolygons.get(area) ?? null;
-                updateRedPolygon(area, tightPoly);
+
+                // Determine lifecycle: mivzak if tight polygon exists, else forecast
+                const lifecycle = tightPoly ? 'mivzak' : 'forecast';
+                updateForecastPolygon(area, tightPoly, lifecycle);
             });
 
-            // Fade out polygons for areas no longer active
-            for (const [area, layer] of Object.entries(sirenPolyByArea)) {
-                if (!activeAreas.has(area)) {
-                    layer.getElement()?.classList.add('tactical-polygon-fadeout');
-                    const lyr = layer;
-                    setTimeout(() => { sirenMap.removeLayer(lyr); }, 1200);
-                    delete sirenPolyByArea[area];
+            // 3. Check if oref confirms ALL cities for an area → transition polygon to confirmed
+            for (const [area, entry] of Object.entries(sirenPolyByArea)) {
+                if (entry.lifecycle === 'clear' || entry.lifecycle === 'confirmed') continue;
+                const cities = mivzakCities[area];
+                if (cities && cities.length > 0 && cities.every(c => officialAreas.has(c))) {
+                    transitionPolygonLifecycle(area, 'confirmed');
+                }
+            }
+
+            // 5. Transition inactive polygons to clear (2-min fade)
+            for (const [area, entry] of Object.entries(sirenPolyByArea)) {
+                if (!activeAreas.has(area) && entry.lifecycle !== 'clear') {
+                    transitionToClear(area);
                 }
             }
 
@@ -1244,7 +1288,7 @@
             return result;
         }
 
-        function updateRedPolygon(area, tightPolygon) {
+        function updateForecastPolygon(area, tightPolygon, lifecycle) {
             if (!mapData) return;
             let polyCoords = null;
 
@@ -1259,19 +1303,63 @@
 
             if (!polyCoords) return;
 
+            const style = LIFECYCLE_STYLES[lifecycle];
             const existing = sirenPolyByArea[area];
             if (existing) {
-                animatePolygon(existing, polyCoords, 1500);
+                // Animate shape change (e.g., broad → tight when mivzak arrives)
+                animatePolygon(existing.layer, polyCoords, 1500);
+                // Update lifecycle if changed
+                if (existing.lifecycle !== lifecycle) {
+                    transitionPolygonLifecycle(area, lifecycle);
+                }
             } else {
-                // Create new polygon
                 const poly = L.polygon(polyCoords, {
-                    color: 'var(--red)',
-                    weight: 2,
-                    fillOpacity: 0.15,
-                    className: 'tactical-polygon-urgent'
+                    color: style.color,
+                    fillColor: style.color,
+                    weight: style.weight,
+                    fillOpacity: style.fillOpacity,
+                    className: style.cls
                 }).addTo(sirenMap);
-                sirenPolyByArea[area] = poly;
+                sirenPolyByArea[area] = { layer: poly, lifecycle, timeout: null };
                 sirenLayers.push(poly);
+            }
+        }
+
+        function transitionPolygonLifecycle(area, newLifecycle) {
+            const entry = sirenPolyByArea[area];
+            if (!entry) return;
+            const style = LIFECYCLE_STYLES[newLifecycle];
+            const el = entry.layer.getElement();
+            if (el) {
+                el.classList.remove(LIFECYCLE_STYLES[entry.lifecycle].cls);
+                el.classList.remove('fading');
+                el.classList.add(style.cls);
+            }
+            entry.layer.setStyle({ color: style.color, fillColor: style.color, fillOpacity: style.fillOpacity, weight: style.weight });
+            if (entry.timeout) { clearTimeout(entry.timeout); entry.timeout = null; }
+            entry.lifecycle = newLifecycle;
+        }
+
+        function transitionToClear(area) {
+            const entry = sirenPolyByArea[area];
+            if (!entry) return;
+            transitionPolygonLifecycle(area, 'clear');
+            // Start 2-min fade, then remove
+            requestAnimationFrame(() => {
+                const el = entry.layer.getElement();
+                if (el) el.classList.add('fading');
+            });
+            entry.timeout = setTimeout(() => {
+                sirenMap.removeLayer(entry.layer);
+                delete sirenPolyByArea[area];
+            }, 120000);
+        }
+
+        function transitionAllToClear() {
+            for (const area of Object.keys(sirenPolyByArea)) {
+                if (sirenPolyByArea[area].lifecycle !== 'clear') {
+                    transitionToClear(area);
+                }
             }
         }
 
@@ -1301,6 +1389,9 @@
             sirenLayers = [];
             sirenMarkerLayers.forEach(l => sirenMap.removeLayer(l));
             sirenMarkerLayers = [];
+            for (const entry of Object.values(sirenPolyByArea)) {
+                if (entry.timeout) clearTimeout(entry.timeout);
+            }
             sirenPolyByArea = {};
         }
 
