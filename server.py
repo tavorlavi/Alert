@@ -126,8 +126,10 @@ _DURATION_PATTERNS = [
     re.compile(r'(\d+(?:\.\d+)?)\s*וחצי\s*(' + _ALL_UNITS + ')'),
     # "דקה וחצי" / "שניה וחצי"
     re.compile(r'(דקה|שניה)\s*וחצי'),
-    # "3/4 דקות" range notation
-    re.compile(r'(\d+)\s*/\s*(\d+)\s*(' + _ALL_UNITS + ')'),
+    # "חצי דקה" / "חצי שניה"
+    re.compile(r'חצי\s*(דקה|שניה)'),
+    # "3/4 דקות" or "3-4 דקות" range notation
+    re.compile(r'(\d+)\s*[/\-]\s*(\d+)\s*(' + _ALL_UNITS + ')'),
     # Standard: "5 דקות", "5.5 דק", "35 שניות"
     re.compile(r'(\d+(?:\.\d+)?)\s*(' + _ALL_UNITS + ')'),
     # Bare unit: "דקה", "דקות", "שניות"
@@ -138,7 +140,8 @@ _DURATION_PATTERNS = [
 DURATION_STRIP_RE = re.compile(
     r'(?:\d+(?:\.\d+)?\s*וחצי\s*(?:' + _ALL_UNITS + '))'
     r'|(?:(?:דקה|שניה)\s*וחצי)'
-    r'|(?:\d+\s*/\s*\d+\s*(?:' + _ALL_UNITS + '))'
+    r'|(?:חצי\s*(?:דקה|שניה))'
+    r'|(?:\d+\s*[/\-]\s*\d+\s*(?:' + _ALL_UNITS + '))'
     r'|(?:(?:\d+(?:\.\d+)?)\s*)?(?:' + _ALL_UNITS + ')'
 )
 
@@ -171,8 +174,16 @@ def _to_expected_seconds(expected_time_text):
             return 90
         return 1  # שניה וחצי ≈ 1s (unlikely but safe)
 
-    # "X/Y UNIT" - take the higher number (safety margin)
+    # "חצי דקה" / "חצי שניה"
     m = _DURATION_PATTERNS[2].search(expected_time_text)
+    if m:
+        unit = m.group(1)
+        if unit == "דקה":
+            return 30
+        return 0
+
+    # "X/Y UNIT" or "X-Y UNIT" - take the higher number (safety margin)
+    m = _DURATION_PATTERNS[3].search(expected_time_text)
     if m:
         value = float(max(int(m.group(1)), int(m.group(2))))
         unit = m.group(3)
@@ -181,7 +192,7 @@ def _to_expected_seconds(expected_time_text):
         return int(value)
 
     # Standard "X UNIT"
-    m = _DURATION_PATTERNS[3].search(expected_time_text)
+    m = _DURATION_PATTERNS[4].search(expected_time_text)
     if m:
         value = float(m.group(1))
         unit = m.group(2)
@@ -190,7 +201,7 @@ def _to_expected_seconds(expected_time_text):
         return int(value)
 
     # Bare unit "דקה" / "שניה"
-    m = _DURATION_PATTERNS[4].search(expected_time_text)
+    m = _DURATION_PATTERNS[5].search(expected_time_text)
     if m:
         unit = m.group(1)
         if unit in _MINUTE_UNITS:
@@ -213,10 +224,11 @@ TACTICAL_REGION_MAPPING = {
     "נתיבות": "דרום", "שדרות": "דרום", "אופקים": "דרום", "ערד": "דרום",
     "תל אביב": "מרכז", "ראשון לציון": "מרכז", "חולון": "מרכז", "רמת גן": "מרכז",
     "פתח תקווה": "מרכז", "הרצליה": "מרכז", "נתניה": "מרכז", "כפר סבא": "מרכז",
-    "מודיעין": "מרכז", "יפו": "מרכז",
+    "מודיעין": "מרכז", "יפו": "מרכז", "זכרון": "מרכז",
     "בית שמש": "ירושלים",
     "חיפה": "צפון", "עכו": "צפון", "נהריה": "צפון", "טבריה": "צפון", "צפת": "צפון",
     "כרמיאל": "צפון", "ראש פינה": "צפון", "קרית שמונה": "צפון", "חצור": "צפון",
+    "בית שאן": "צפון", "יוקנעם": "צפון", "מעלות": "צפון",
 }
 
 AREA_NORMALIZATION = {
@@ -234,12 +246,15 @@ AREA_NORMALIZATION = {
 EXCLUDE_WORDS = {
     "שיגור", "שיגורים", "כעת", "אזעקות", "אזעקה", "יירוטים", "חזלש",
     "מלבנון", "מאיראן", "מעזה", "מתימן", "מעיראק", "מגיע", "זוהו", "זוהה",
-    "שני", "שנייה", "נוסף", "נוספים", "חדש", "נוספות",
+    "שני", "שנייה", "נוסף", "נוספים", "נוספות", "חדש",
     "להתמגן", "התמגן", "תתמגנו", "השמרו",
     "מצרר", "מצררים",
     "נפילה", "נפילות", "נפתח", "נפתחים",
     "טיל", "טילי", "טילים",
     "לערך", "בערך", "ערך",
+    "הגעה", "יציאות", "יציאה", "יופעלו", "שתפו",
+    "כמובן", "שוב", "מספר", "ניהם", "זיהוי", "מאוחר",
+    "תותח", "כולל", "מתרחב", "מיירט",
 }
 
 HEBREW_ABBREVIATIONS = {
@@ -423,7 +438,7 @@ def extract_areas_from_text(text):
         if not line:
             continue
         if any(skip in line for skip in [
-            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים"
+            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים"
         ]):
             continue
 
@@ -439,7 +454,7 @@ def extract_areas_from_text(text):
         # Strip exact time formats and time units so they don't become areas
         line = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line)
         line = DURATION_STRIP_RE.sub('', line)
-        line = re.sub(r'צפי|משך|עוד|וחצי|לאזעקה|לאזעקות|כעת|כרגע|לכרגע|מיקוד|מרחב', '', line)
+        line = re.sub(r'צפי|משך|עוד|חצי|וחצי|לאזעקה|לאזעקות|כעת|כרגע|לכרגע|מיקוד|מרחב|גזרת|איזור|ממוקד(?:ת)?', '', line)
         line = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line)  # strip emojis
 
         for part in re.split(r'[,/|\-\n]', line):
@@ -466,7 +481,7 @@ def extract_areas_from_text(text):
                 # Remove excluded words
                 words = [w for w in part.split() if w not in EXCLUDE_WORDS and w != "ו"]
                 cleaned_area = " ".join(words).strip()
-                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|מיקוד\s|מרחב\s|גם\sל|גם\sב|גם\s|ל|ב)', '', cleaned_area).strip()
+                cleaned_area = re.sub(r'^(לכיוון\s|אל\s|כיוון\s|אזור\s|באזור\s|איזור\s|מיקוד\s|מרחב\s|גזרת\s|גם\sל|גם\sב|גם\s|ל|ב)', '', cleaned_area).strip()
                 
                 # Short generic words aren't areas usually
                 if not cleaned_area or len(cleaned_area) < 2 or len(cleaned_area.split()) > 3:
@@ -495,7 +510,7 @@ def extract_forecast_data(text):
         if not line: continue
             
         if any(skip in line.lower() for skip in [
-            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים", "נוספים",
+            "http://", "https://", "t.me/", "היכנסו", "פיקוד העורף", "ירי רקטות", "חדירת כלי", "חדירת מחבלים", "ללא התרעה", "לא יופעלו", "מערכות ההגנה", "ערוץ", "בלבד", "בדרכם", "יורטו", "חריג", "פרטים",
             "מבצע", "טלויזיה", "מומלץ", "לחץ כאן", "tv", "מגשימים", "חבורה", "פיצוצים", "נפילה", "קולות", "הדף", "שנה של", "ערבות", "ארוך טווח"
         ]):
             continue
@@ -515,7 +530,7 @@ def extract_forecast_data(text):
                 line_clean = line_clean.replace(abbr, full)
         line_clean = re.sub(r'\d{1,2}:\d{2}(?::\d{2})?', '', line_clean)
         line_clean = DURATION_STRIP_RE.sub('', line_clean)
-        line_clean = re.sub(r'צפי|משך|עוד|וחצי|לאזעקה|לאזעקות|מיקוד|מרחב', '', line_clean)
+        line_clean = re.sub(r'צפי|משך|עוד|חצי|וחצי|לאזעקה|לאזעקות|מיקוד|מרחב|גזרת|איזור|ממוקד(?:ת)?', '', line_clean)
         line_clean = re.sub(r'[^\w\s\u05d0-\u05ea,/|\-]', '', line_clean)  # strip emojis
         
         line_areas = []
@@ -1153,11 +1168,17 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 if len(alert_history) > MAX_HISTORY:
                     alert_history.pop()
 
-    # Clean up active alerts and build latest_event
+    _rebuild_latest_event()
+
+
+def _rebuild_latest_event():
+    """Clean up expired alerts and rebuild latest_event from active state."""
+    global latest_event
+
     cleanup_dt = datetime.now(local_tz)
     to_delete = []
     current_alerts_array = []
-    
+
     for area, info in active_alerts_by_area.items():
         is_relevant = False
         target_time_str = info.get("target_time")
@@ -1169,17 +1190,17 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
             r_dt = datetime.fromisoformat(info["received_at"])
             if (cleanup_dt - r_dt).total_seconds() <= 30 * 60:  # area-only alerts: 30 min window
                 is_relevant = True
-                
+
         if is_relevant:
             current_alerts_array.append(info)
         else:
             to_delete.append(area)
-            
+
     for area in to_delete:
         del active_alerts_by_area[area]
-        
+
     if current_alerts_array:
-        # Group by identical timings and texts to avoid duplicate cards 
+        # Group by identical timings and texts to avoid duplicate cards
         grouped_alerts = []
         for alert in current_alerts_array:
             found_group = False
@@ -1193,12 +1214,12 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 new_group = alert.copy()
                 new_group["areas"] = list(alert["areas"])
                 grouped_alerts.append(new_group)
-                
+
         latest_event = {
             "text": "מערכת התרעות פעילה",
             "target_time": grouped_alerts[0].get("target_time") if grouped_alerts else None,
             "received_at": max([a["received_at"] for a in current_alerts_array]),
-            "areas": [], # Handled by subAlertsContainer
+            "areas": [],
             "alerts": grouped_alerts,
             "has_data": True
         }
@@ -1229,13 +1250,19 @@ async def telegram_polling_loop():
     # Continuous polling Ã¢â‚¬â€ only latest page
     while True:
         await asyncio.sleep(TELEGRAM_POLL_INTERVAL)
+        any_new = False
         for ch_name, ch_config in TELEGRAM_CHANNELS.items():
             try:
                 messages = await scrape_telegram_channel(ch_name, ch_config, max_pages=1)
                 if messages:
                     await process_forecast_messages(messages, ch_name, is_init=False)
+                    any_new = True
             except Exception as e:
                 print(f"Ã¢Å¡Â Ã¯Â¸Â Error polling {ch_name}: {e}")
+
+        # Rebuild latest_event once after all channels, not per-channel
+        if any_new:
+            _rebuild_latest_event()
 
 @app.get("/api/latest")
 async def get_latest_event(mock: bool = False, tactical: str = None, minutes: float = 5):

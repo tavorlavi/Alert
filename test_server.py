@@ -299,3 +299,152 @@ class TestAreaExtraction:
         areas = server.extract_areas_from_text("7 דקות לערך")
         assert "ערך" not in areas
         assert "לערך" not in areas
+
+    def test_beit_shean_maps_to_tzafon(self):
+        result = server.extract_forecast_data("שיגור לבית שאן")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "צפון" in all_areas
+
+    def test_gezrat_prefix_stripped(self):
+        """גזרת (sector) should be stripped like אזור"""
+        areas = server.extract_areas_from_text("שיגורים לגזרת בית שאן")
+        assert "צפון" in areas
+
+    def test_izor_misspelling_stripped(self):
+        """איזור (misspelling of אזור) should be handled"""
+        areas = server.extract_areas_from_text("איזור שפלה")
+        assert "שפלה" in areas
+
+    def test_nosafim_not_blocking_line(self):
+        """נוספים should not block the entire line"""
+        result = server.extract_forecast_data("שיגורים נוספים לדרום")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "דרום" in all_areas
+
+    def test_haga_a_not_area(self):
+        """הגעה should not be extracted as an area"""
+        areas = server.extract_areas_from_text("הגעה למרכז בקרוב")
+        assert "הגעה" not in areas
+        assert "מרכז" in areas
+
+    def test_yetziot_not_area(self):
+        areas = server.extract_areas_from_text("יציאות מאיראן לדרום")
+        assert "יציאות" not in areas
+        assert "דרום" in areas
+
+    def test_yokneam_maps_to_tzafon(self):
+        result = server.extract_forecast_data("שיגור ליוקנעם")
+        all_areas = [a for alert in result["alerts"] for a in alert["areas"]]
+        assert "צפון" in all_areas
+
+
+class TestDurationEdgeCases:
+    def test_hatzi_daka_30_seconds(self):
+        """חצי דקה = 0.5 minutes = 30 seconds"""
+        assert server.extract_expected_time_text("חצי דקה") == "חצי דקה"
+        assert server._to_expected_seconds("חצי דקה") == 30
+
+    def test_hatzi_daka_in_sentence(self):
+        assert server._to_expected_seconds(server.extract_expected_time_text("חצי דקה לאזעקה")) == 30
+
+    def test_dash_range(self):
+        """3-4 דקות = take max = 4 minutes = 240 seconds"""
+        assert server._to_expected_seconds(server.extract_expected_time_text("3-4 דקות")) == 240
+
+    def test_dash_range_in_sentence(self):
+        text = "3-4 דקות לאזעקה"
+        assert server._to_expected_seconds(server.extract_expected_time_text(text)) == 240
+
+
+class TestTimingPreservation:
+    """Verify timing is not lost when area-only messages arrive from faster channels."""
+
+    def _reset_state(self):
+        server.today_forecasts.clear()
+        server.today_messages.clear()
+        server.alert_history.clear()
+        server.active_alerts_by_area.clear()
+        server.channel_last_areas.clear()
+        server.pending_forecast_parts.clear()
+        for key in server.telegram_last_seen_ids:
+            server.telegram_last_seen_ids[key].clear()
+        server.latest_event = {"text": "ממתין לעדכונים...", "target_time": None, "has_data": False}
+
+    def _make_msg(self, text, channel, dt, msg_id):
+        return {"text": text, "msg_dt": dt, "id": str(msg_id), "channel": channel}
+
+    def test_area_only_preserves_existing_timing(self):
+        """When an area-only msg arrives after a timed msg for same area, timing is preserved."""
+        self._reset_state()
+        local_tz = server.local_tz
+        now = datetime(2026, 4, 2, 19, 18, 0, tzinfo=local_tz)
+        original_dt = server.datetime
+
+        class MockDT(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+        server.datetime = MockDT
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            # Channel 1 (alert_Real_Time): full alert with timing
+            msgs_rt = [self._make_msg("שיגור מאיראן למרכז\nעוד 8 דקות אזעקה", "alert_Real_Time", now, "rt1")]
+            loop.run_until_complete(server.process_forecast_messages(msgs_rt, "alert_Real_Time", is_init=True))
+
+            # Verify timing is set
+            merkaz = server.active_alerts_by_area.get("מרכז")
+            assert merkaz is not None
+            assert merkaz["target_time"] is not None
+            saved_target = merkaz["target_time"]
+
+            # Channel 2 (shigurimsh): area-only, no timing
+            msgs_sh = [self._make_msg("שיגורים למרכז", "shigurimsh", now + timedelta(seconds=120), "sh1")]
+            loop.run_until_complete(server.process_forecast_messages(msgs_sh, "shigurimsh", is_init=True))
+
+            # Timing must still be present
+            merkaz = server.active_alerts_by_area.get("מרכז")
+            assert merkaz is not None, "מרכז entry was deleted"
+            assert merkaz["target_time"] == saved_target, \
+                f"Timing lost: expected {saved_target}, got {merkaz['target_time']}"
+        finally:
+            loop.close()
+            server.datetime = original_dt
+
+    def test_rebuild_latest_event_groups_timing(self):
+        """_rebuild_latest_event produces correct grouped output with timing."""
+        self._reset_state()
+        local_tz = server.local_tz
+        now = datetime(2026, 4, 2, 19, 18, 0, tzinfo=local_tz)
+        target = (now + timedelta(seconds=480)).isoformat()
+        original_dt = server.datetime
+
+        class MockDT(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+        server.datetime = MockDT
+
+        try:
+            server.active_alerts_by_area["מרכז"] = {
+                "text": "שיגור למרכז",
+                "target_time": target,
+                "received_at": now.isoformat(),
+                "clock_time": None,
+                "expected_time_text": "8 דקות",
+                "source_channel": "alert_Real_Time",
+                "areas": ["מרכז"],
+                "tight_polygon": None,
+            }
+
+            server._rebuild_latest_event()
+
+            assert server.latest_event["has_data"] is True
+            alerts = server.latest_event["alerts"]
+            merkaz_alerts = [a for a in alerts if "מרכז" in a.get("areas", [])]
+            assert len(merkaz_alerts) == 1
+            assert merkaz_alerts[0]["target_time"] == target
+            assert merkaz_alerts[0]["expected_time_text"] == "8 דקות"
+        finally:
+            server.datetime = original_dt
