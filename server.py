@@ -25,7 +25,7 @@ if os.path.exists(env_path):
 # ==========================
 # Configuration
 # ==========================
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT", "7860"))
 
 # Telegram channels to scrape via public t.me/s/ pages (no auth needed)
 TELEGRAM_CHANNELS = {
