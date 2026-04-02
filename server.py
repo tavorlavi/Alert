@@ -1353,6 +1353,10 @@ async def get_oref_alerts(mock: bool = False, oref: str = None, tactical: str = 
 async def serve_index():
     return FileResponse("index.html")
 
+@app.get("/sw.js")
+async def serve_sw():
+    return FileResponse("sw.js", media_type="application/javascript", headers={"Service-Worker-Allowed": "/"})
+
 @app.get("/manifest.json")
 async def serve_manifest():
     return FileResponse("manifest.json", media_type="application/manifest+json")

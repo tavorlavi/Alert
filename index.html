@@ -64,44 +64,48 @@
             font-family: 'Orbitron', sans-serif;
         }
 
-        /* CRT scan-line overlay */
+        /* Noise texture overlay */
         body::after {
             content: '';
             position: fixed;
             inset: 0;
-            background: repeating-linear-gradient(to bottom,
-                    var(--scanline) 0px,
-                    var(--scanline) 1px,
-                    transparent 1px,
-                    transparent 3px);
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 128px 128px;
             pointer-events: none;
             z-index: 9999;
-            opacity: 0.35;
+            opacity: 0.6;
+            mix-blend-mode: overlay;
         }
 
-        /* subtle phosphor bloom on entire page */
+        /* Faint scanlines under noise */
         body::before {
             content: '';
             position: fixed;
             inset: 0;
-            background:
-                radial-gradient(ellipse 80% 60% at 50% 30%, rgba(57, 255, 20, 0.04) 0%, transparent 70%);
+            background: repeating-linear-gradient(to bottom,
+                    rgba(0, 0, 0, 0.15) 0px,
+                    rgba(0, 0, 0, 0.15) 1px,
+                    transparent 1px,
+                    transparent 4px);
             pointer-events: none;
-            z-index: 0;
+            z-index: 9998;
+            opacity: 0.12;
         }
 
         /* ── CLASSIFICATION BANNER ──────────────────── */
         .class-banner {
-            background: var(--phosphor);
+            background: linear-gradient(90deg, #39ff14, #2de010, #39ff14);
             color: #000;
             font-weight: 900;
             font-size: 0.65rem;
-            letter-spacing: 4px;
+            letter-spacing: 3px;
             text-align: center;
             padding: 0.35rem;
             text-transform: uppercase;
             position: relative;
             z-index: 300;
+            border-bottom: 1px solid rgba(57, 255, 20, 0.6);
         }
 
         /* ── HEADER ─────────────────────────────────── */
@@ -109,14 +113,15 @@
             position: sticky;
             top: 0;
             z-index: 200;
-            background: rgba(2, 8, 5, 0.95);
-            border-bottom: 1px solid var(--p-border);
+            background: linear-gradient(180deg, rgba(4, 12, 6, 0.98), rgba(2, 8, 5, 0.95));
+            border-bottom: 1px solid rgba(57, 255, 20, 0.2);
             padding: 0 1rem;
             height: 60px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             backdrop-filter: blur(8px);
+            box-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
         }
 
         .hdr-left {
@@ -133,17 +138,17 @@
         }
 
         .hdr-title {
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             font-weight: 700;
             color: var(--phosphor);
-            letter-spacing: 2px;
-            text-shadow: 0 0 10px var(--p-glow);
+            letter-spacing: 2.5px;
+            text-shadow: 0 0 8px rgba(57, 255, 20, 0.3);
             line-height: 1.2;
         }
 
         .hdr-sub {
             font-size: 0.65rem;
-            color: var(--text-dim);
+            color: rgba(57, 255, 20, 0.4);
             letter-spacing: 1.5px;
             margin-top: 2px;
         }
@@ -157,8 +162,8 @@
         .hdr-clock {
             font-size: 1rem;
             color: var(--phosphor);
-            text-shadow: 0 0 8px var(--p-glow);
-            letter-spacing: 1.5px;
+            text-shadow: 0 0 6px rgba(57, 255, 20, 0.25);
+            letter-spacing: 2px;
         }
 
         .hdr-status-dot {
@@ -198,10 +203,10 @@
             z-index: 1;
             max-width: 600px;
             margin: 0 auto;
-            padding: 1.5rem 1rem 4rem;
+            padding: 1.5rem 1.1rem 4rem;
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
+            gap: 1.6rem;
         }
 
         /* ── RADAR + STATUS CARD ─────────────────────── */
@@ -375,28 +380,32 @@
 
         /* STATUS PANEL */
         .status-panel {
-            background: rgba(4, 10, 6, 0.9);
-            border: 1px solid var(--p-border);
-            border-radius: 6px;
-            padding: 1.5rem;
+            background: linear-gradient(180deg, rgba(6, 14, 8, 0.95), rgba(3, 8, 5, 0.9));
+            border: 1px solid rgba(57, 255, 20, 0.2);
+            border-radius: 8px;
+            padding: 1.6rem 1.2rem;
             position: relative;
             overflow: hidden;
             width: 100%;
             transition: border-color 0.4s ease, box-shadow 0.4s ease;
             text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 1px rgba(57, 255, 20, 0.15), inset 0 1px 0 rgba(57, 255, 20, 0.08);
         }
 
         .status-panel::before {
-            content: '[ SYSTEM STATE ]';
+            content: 'SYSTEM STATE';
             position: absolute;
-            top: -1px;
+            top: 0;
             left: 1rem;
-            font-size: 0.65rem;
-            letter-spacing: 2px;
+            font-size: 0.5rem;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 2.5px;
             color: var(--bg);
             background: var(--phosphor);
-            padding: 0.1rem 0.6rem;
+            padding: 0.15rem 0.7rem 0.12rem;
             line-height: 1.2;
+            border-radius: 0 0 3px 3px;
         }
 
         .status-panel.threat-active {
@@ -434,11 +443,11 @@
         }
 
         .status-state {
-            font-size: 1.8rem;
+            font-size: 2rem;
             font-weight: 800;
             color: var(--phosphor);
-            text-shadow: 0 0 14px var(--p-glow);
-            letter-spacing: 1px;
+            text-shadow: 0 0 10px rgba(57, 255, 20, 0.3);
+            letter-spacing: 0.5px;
             margin-top: 0.5rem;
             transition: color 0.4s ease, text-shadow 0.4s ease;
         }
@@ -521,9 +530,9 @@
         }
 
         .sub-alert-card {
-            background: linear-gradient(90deg, rgba(255, 34, 51, 0.12), rgba(255, 34, 51, 0.04));
-            border: 1px solid rgba(255, 34, 51, 0.3);
-            border-radius: 6px;
+            background: linear-gradient(90deg, rgba(255, 34, 51, 0.1), rgba(255, 34, 51, 0.03));
+            border: 1px solid rgba(255, 34, 51, 0.25);
+            border-radius: 8px;
             padding: 1rem 1.2rem;
             display: flex;
             align-items: center;
@@ -532,6 +541,7 @@
             position: relative;
             overflow: hidden;
             animation: slideIn 0.35s ease both;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 34, 51, 0.08);
         }
 
         .sub-alert-card::before {
@@ -628,7 +638,7 @@
             gap: 1rem;
             font-size: 0.75rem;
             letter-spacing: 2px;
-            color: var(--text-dim);
+            color: rgba(57, 255, 20, 0.35);
             font-weight: 700;
             width: 100%;
         }
@@ -638,44 +648,45 @@
             content: '';
             flex: 1;
             height: 1px;
-            background: linear-gradient(to left, var(--p-border), transparent);
+            background: linear-gradient(to left, rgba(57, 255, 20, 0.2), transparent);
         }
 
         .section-divider::before {
-            background: linear-gradient(to right, var(--p-border), transparent);
+            background: linear-gradient(to right, rgba(57, 255, 20, 0.2), transparent);
         }
 
         /* ── STATS ROW ───────────────────────────────── */
         .stats-row {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 0.5rem;
+            gap: 0.6rem;
             width: 100%;
         }
 
         .stat-box {
-            background: rgba(4, 10, 6, 0.8);
-            border: 1px solid var(--p-border);
-            border-radius: 4px;
-            padding: 0.75rem 0.5rem;
+            background: linear-gradient(180deg, rgba(6, 14, 8, 0.85), rgba(3, 8, 5, 0.8));
+            border: 1px solid rgba(57, 255, 20, 0.15);
+            border-radius: 8px;
+            padding: 0.85rem 0.6rem;
             text-align: center;
             display: flex;
             flex-direction: column;
             gap: 0.4rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(57, 255, 20, 0.06);
         }
 
         .stat-val {
-            font-size: 1.35rem;
+            font-size: 1.5rem;
             color: var(--phosphor);
             font-weight: 700;
-            text-shadow: 0 0 8px var(--p-glow);
+            text-shadow: 0 0 6px rgba(57, 255, 20, 0.25);
             line-height: 1;
         }
 
         .stat-lbl {
             font-size: 0.6rem;
-            color: var(--text-dim);
-            letter-spacing: 1px;
+            color: rgba(57, 255, 20, 0.4);
+            letter-spacing: 1.2px;
             font-weight: 700;
         }
 
@@ -706,28 +717,29 @@
         }
 
         .hist-card {
-            background: linear-gradient(90deg, rgba(4, 10, 6, 0.95), rgba(4, 10, 6, 0.7));
-            border: 1px solid var(--p-border);
-            border-right: 4px solid var(--phosphor);
-            border-radius: 4px;
-            padding: 0.75rem 1rem;
+            background: linear-gradient(90deg, rgba(6, 14, 8, 0.9), rgba(3, 8, 5, 0.75));
+            border: 1px solid rgba(57, 255, 20, 0.15);
+            border-right: 3px solid rgba(57, 255, 20, 0.6);
+            border-radius: 6px;
+            padding: 0.85rem 1.1rem;
             display: flex;
             flex-direction: column;
             gap: 0.6rem;
             transition: all 0.2s ease;
             position: relative;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
         }
 
         .hist-card:hover {
-            background: linear-gradient(90deg, rgba(57, 255, 20, 0.08), rgba(4, 10, 6, 0.8));
-            border-color: rgba(57, 255, 20, 0.4);
+            background: linear-gradient(90deg, rgba(57, 255, 20, 0.06), rgba(4, 10, 6, 0.8));
+            border-color: rgba(57, 255, 20, 0.3);
         }
 
         .hist-top {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px dashed rgba(57, 255, 20, 0.15);
+            border-bottom: 1px solid rgba(57, 255, 20, 0.08);
             padding-bottom: 0.5rem;
         }
 
@@ -765,14 +777,13 @@
             display: flex;
             align-items: center;
             gap: 0.3rem;
-            background: rgba(57, 255, 20, 0.05);
-            color: var(--phosphor);
+            background: rgba(57, 255, 20, 0.04);
+            color: rgba(57, 255, 20, 0.8);
             padding: 0.15rem 0.5rem;
-            border-radius: 2px;
+            border-radius: 3px;
             font-size: 0.85rem;
             font-weight: 600;
-            border: 1px solid rgba(57, 255, 20, 0.2);
-            text-shadow: 0 0 5px var(--p-glow);
+            border: 1px solid rgba(57, 255, 20, 0.12);
         }
 
         .svg-icon {
@@ -796,16 +807,16 @@
             align-items: center;
             gap: 0.75rem;
             padding: 0.6rem 1rem;
-            background: rgba(4, 10, 6, 0.85);
-            border: 1px solid var(--p-border);
-            border-radius: 4px;
+            background: linear-gradient(180deg, rgba(6, 14, 8, 0.85), rgba(3, 8, 5, 0.8));
+            border: 1px solid rgba(57, 255, 20, 0.15);
+            border-radius: 6px;
             font-size: 0.75rem;
-            color: var(--phosphor);
+            color: rgba(57, 255, 20, 0.7);
             letter-spacing: 1.5px;
-            text-shadow: 0 0 6px var(--p-glow);
             transition: all 0.3s ease;
             width: 100%;
             justify-content: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
         }
 
         .comms-bar::before {
@@ -814,7 +825,7 @@
             height: 7px;
             border-radius: 50%;
             background: var(--phosphor);
-            box-shadow: 0 0 8px var(--p-glow);
+            box-shadow: 0 0 4px rgba(57, 255, 20, 0.4);
             animation: blink 1.2s ease-in-out infinite;
             flex-shrink: 0;
         }
@@ -861,18 +872,19 @@
         /* ── SIREN MAP ───────────────────────── */
         .map-section {
             width: 100%;
-            border: 1px solid var(--p-border);
-            border-radius: 6px;
+            border: 1px solid rgba(57, 255, 20, 0.2);
+            border-radius: 8px;
             overflow: hidden;
             position: relative;
             transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 1px rgba(57, 255, 20, 0.1);
         }
 
         #siren-map {
-            height: 350px;
+            height: 380px;
             width: 100%;
             background: #000;
-            border-bottom: 1px solid var(--p-border);
+            border-bottom: 1px solid rgba(57, 255, 20, 0.1);
             position: relative;
         }
 
@@ -894,10 +906,11 @@
             align-items: center;
             justify-content: space-between;
             padding: 0.45rem 0.8rem;
-            background: rgba(4, 10, 6, 0.95);
+            background: linear-gradient(180deg, rgba(4, 10, 6, 0.98), rgba(3, 8, 5, 0.95));
             font-size: 0.65rem;
             letter-spacing: 1.5px;
-            color: var(--text-dim);
+            color: rgba(57, 255, 20, 0.4);
+            border-top: 1px solid rgba(57, 255, 20, 0.1);
         }
 
         .map-status-pill {
@@ -982,10 +995,156 @@
         }
         .legend-item { display: flex; align-items: center; gap: 5px; }
         .legend-dot { width: 8px; height: 8px; transform: rotate(45deg); flex-shrink: 0; }
+
+        /* ── DISCLAIMER POPUP ──────────────────────── */
+        .disclaimer-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            backdrop-filter: blur(4px);
+        }
+        .disclaimer-overlay.hidden { display: none; }
+        .disclaimer-box {
+            background: linear-gradient(180deg, rgba(6, 14, 8, 0.98), rgba(2, 6, 4, 0.98));
+            border: 1px solid rgba(255, 170, 0, 0.4);
+            border-radius: 10px;
+            padding: 1.8rem 1.5rem;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 170, 0, 0.3);
+        }
+        .disclaimer-icon {
+            font-size: 2rem;
+            margin-bottom: 0.8rem;
+            line-height: 1;
+        }
+        .disclaimer-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--amber);
+            letter-spacing: 2px;
+            margin-bottom: 1rem;
+        }
+        .disclaimer-text {
+            font-size: 0.9rem;
+            color: var(--text);
+            line-height: 1.7;
+            margin-bottom: 1.5rem;
+            direction: rtl;
+        }
+        .disclaimer-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+        .disclaimer-btn {
+            padding: 0.7rem 1rem;
+            border-radius: 6px;
+            font-family: 'Heebo', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+        }
+        .disclaimer-btn.primary {
+            background: var(--amber);
+            color: #000;
+        }
+        .disclaimer-btn.primary:active {
+            background: #e69900;
+        }
+        .disclaimer-btn.secondary {
+            background: transparent;
+            color: rgba(57, 255, 20, 0.5);
+            border: 1px solid rgba(57, 255, 20, 0.15);
+            font-size: 0.75rem;
+        }
+        .disclaimer-btn.secondary:active {
+            background: rgba(57, 255, 20, 0.05);
+        }
+
+        /* ── MUTE BUTTON ──────────────────────────── */
+        .hdr-mute-btn {
+            background: none;
+            border: none;
+            color: var(--phosphor);
+            font-size: 0.75rem;
+            cursor: pointer;
+            padding: 0.2rem;
+            line-height: 1;
+            transition: color 0.2s ease;
+            opacity: 0.6;
+        }
+        .hdr-mute-btn:active {
+            opacity: 1;
+        }
+        .hdr-mute-btn.muted {
+            color: var(--red);
+            opacity: 0.8;
+        }
+
+        /* ── SHARE BUTTON ─────────────────────────── */
+        .share-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.55rem 1rem;
+            background: linear-gradient(180deg, rgba(6, 14, 8, 0.85), rgba(3, 8, 5, 0.8));
+            border: 1px solid rgba(57, 255, 20, 0.15);
+            border-radius: 6px;
+            color: rgba(57, 255, 20, 0.7);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        .share-btn:active {
+            background: rgba(57, 255, 20, 0.08);
+            border-color: rgba(57, 255, 20, 0.3);
+        }
+        .share-btn svg {
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }
+        .share-btn.copied {
+            color: var(--phosphor);
+            border-color: rgba(57, 255, 20, 0.4);
+        }
     </style>
 </head>
 
 <body>
+
+    <!-- ── DISCLAIMER POPUP ── -->
+    <div class="disclaimer-overlay" id="disclaimer-overlay">
+        <div class="disclaimer-box">
+            <div class="disclaimer-icon">&#9888;</div>
+            <div class="disclaimer-title">NOTICE</div>
+            <div class="disclaimer-text">
+                מערכת זו מספקת מידע מוקדם לא רשמי.<br>
+                <strong>המידע עלול להיות לא מדויק או שגוי.</strong><br><br>
+                יש להישמע <strong>אך ורק</strong> להנחיות פיקוד העורף הרשמיות<br>ולפעול בהתאם להוראותיהם בלבד.
+            </div>
+            <div class="disclaimer-buttons">
+                <button class="disclaimer-btn primary" onclick="dismissDisclaimer(false)">הבנתי</button>
+                <button class="disclaimer-btn secondary" onclick="dismissDisclaimer(true)">הבנתי, אל תציג שוב</button>
+            </div>
+        </div>
+    </div>
 
     <div class="class-banner orbitron">[*] TOP SECRET // AIR COMMAND // THREAT DETECTION [*]</div>
 
@@ -998,6 +1157,7 @@
             </div>
         </div>
         <div class="hdr-right">
+            <button class="hdr-mute-btn" id="mute-btn" onclick="toggleMute()" title="השתק/בטל השתקה"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
             <div class="hdr-clock mono" id="hdr-clock">--:--:--</div>
             <div class="hdr-status-dot orbitron" id="hdr-link">UPLINK</div>
         </div>
@@ -1078,6 +1238,12 @@
             <div class="hist-empty">מייבא נתונים...</div>
         </div>
 
+        <!-- ── SHARE ── -->
+        <button class="share-btn" id="share-btn" onclick="shareAlert()">
+            <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+            SHARE STATUS
+        </button>
+
         <!-- ── COMMS ── -->
         <div class="comms-bar orbitron" id="connection-status">
             >> COMMS LINK ESTABLISHED // DATA FEED ACTIVE
@@ -1085,6 +1251,123 @@
     </div>
 
     <script>
+        // ── DISCLAIMER ──
+        function dismissDisclaimer(dontShowAgain) {
+            document.getElementById('disclaimer-overlay').classList.add('hidden');
+            if (dontShowAgain) localStorage.setItem('disclaimer-dismissed', '1');
+        }
+        if (localStorage.getItem('disclaimer-dismissed') === '1') {
+            document.getElementById('disclaimer-overlay').classList.add('hidden');
+        }
+
+        // ── ALERT BEEP ──
+        let isMuted = localStorage.getItem('alert-muted') === '1';
+        let alertBeepPlayed = false;
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playBeep() {
+            if (isMuted || audioCtx.state === 'suspended') return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'square';
+            osc.frequency.value = 880;
+            gain.gain.value = 0.15;
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
+        }
+
+        const ICON_UNMUTED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+        const ICON_MUTED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            localStorage.setItem('alert-muted', isMuted ? '1' : '0');
+            const btn = document.getElementById('mute-btn');
+            btn.innerHTML = isMuted ? ICON_MUTED : ICON_UNMUTED;
+            btn.classList.toggle('muted', isMuted);
+        }
+
+        (function() {
+            const btn = document.getElementById('mute-btn');
+            if (isMuted) {
+                btn.innerHTML = ICON_MUTED;
+                btn.classList.add('muted');
+            }
+        })();
+
+        // Resume AudioContext on first user interaction
+        document.addEventListener('click', function resumeAudio() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            document.removeEventListener('click', resumeAudio);
+        }, { once: true });
+
+        // ── SHARE ──
+        function shareAlert() {
+            const appUrl = window.location.origin;
+            let shareText = 'AIR COMMAND - Early Warning System\n' + appUrl;
+
+            // Collect active timer info
+            const timerEls = document.querySelectorAll('.sub-alert-timer');
+            const activeTimers = [];
+            timerEls.forEach(el => {
+                const card = el.closest('.sub-alert-card');
+                if (!card) return;
+                const areas = card.querySelector('.vec-areas');
+                if (areas) {
+                    activeTimers.push(areas.textContent + ': ' + el.textContent);
+                }
+            });
+            if (activeTimers.length > 0) {
+                shareText = 'AIR COMMAND - THREAT DETECTED\n' + activeTimers.join('\n') + '\n\n' + appUrl;
+            }
+
+            if (navigator.share) {
+                navigator.share({ title: 'AIR COMMAND', text: shareText }).catch(() => {});
+            } else {
+                navigator.clipboard.writeText(shareText).then(() => {
+                    const btn = document.getElementById('share-btn');
+                    btn.classList.add('copied');
+                    const orig = btn.innerHTML;
+                    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg> COPIED';
+                    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 2000);
+                });
+            }
+        }
+
+        // ── NOTIFICATIONS ──
+        let notificationPermission = Notification.permission;
+        let lastNotifiedEventStr = null;
+
+        function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission().then(p => { notificationPermission = p; });
+            }
+        }
+
+        function sendNotification(title, body) {
+            if (notificationPermission !== 'granted') return;
+            if (document.visibilityState === 'visible') return;
+            try {
+                new Notification(title, {
+                    body: body,
+                    icon: '/icon.svg',
+                    tag: 'air-command-alert',
+                    renotify: true
+                });
+            } catch (e) { console.error('Notification failed', e); }
+        }
+
+        // Request permission on first interaction
+        document.addEventListener('click', requestNotificationPermission, { once: true });
+
+        // Register service worker for background fetch
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+
         function tickClock() {
             const now = new Date();
             document.getElementById('hdr-clock').textContent =
@@ -1458,6 +1741,8 @@
             clearTimers();
             window.urgentCities.clear();
             window.urgentCityPolygons.clear();
+            alertBeepPlayed = false;
+            lastNotifiedEventStr = null;
         }
 
         async function fetchLatest() {
@@ -1568,6 +1853,19 @@
             if (!relevant) { setSafe(); return; }
 
             // THREAT STATE
+            if (!alertBeepPlayed) {
+                playBeep();
+                alertBeepPlayed = true;
+            }
+
+            // Background notification
+            const notifStr = JSON.stringify(data.alerts || []);
+            if (notifStr !== lastNotifiedEventStr) {
+                lastNotifiedEventStr = notifStr;
+                const areas = (data.alerts || []).flatMap(a => a.areas || []).join(', ');
+                sendNotification('זוהה שיגור!', areas || 'התכוננו להתמגן');
+            }
+
             document.getElementById('status-container').classList.add('threat-active');
             document.getElementById('main-panel').classList.add('alert-active-mode');
             document.getElementById('status-title').textContent = 'זוהה שיגור!';
