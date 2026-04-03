@@ -48,6 +48,16 @@ TELEGRAM_CHANNELS = {
         "url": "https://t.me/s/Yemennews7071",
         "type": "forecast",
         "label": "Yemen and Iran news"
+    },
+    "aharonyediotnews": {
+        "url": "https://t.me/s/aharonyediotnews",
+        "type": "forecast",
+        "label": "אהרון ידיעות"
+    },
+    "fekalshigurim": {
+        "url": "https://t.me/s/fekalshigurim",
+        "type": "forecast",
+        "label": "פקל שיגורים"
     }
 }
 TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
