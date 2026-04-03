@@ -1531,7 +1531,8 @@
 
             // 5. Transition inactive polygons to clear (2-min fade)
             for (const [area, entry] of Object.entries(sirenPolyByArea)) {
-                if (!activeAreas.has(area) && entry.lifecycle !== 'clear') {
+                const hasMivzakBacking = mivzakCities[area] && mivzakCities[area].length > 0;
+                if (!activeAreas.has(area) && !hasMivzakBacking && entry.lifecycle !== 'clear') {
                     transitionToClear(area);
                 }
             }

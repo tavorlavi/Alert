@@ -56,10 +56,23 @@ TELEGRAM_POLL_INTERVAL = 5  # seconds between scrapes
 local_tz = tz.gettz("Asia/Jerusalem")
 app = FastAPI()
 
-# Load city coordinates for tight-polygon computation on בדקות messages
+# Load city coordinates and region mapping for polygon computation
 _geo_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "regional_coords_final.json")
 with open(_geo_file) as _f:
-    CITY_COORDS_LOOKUP: dict = json.load(_f).get("CITY_COORDS", {})
+    _geo_data = json.load(_f)
+    CITY_COORDS_LOOKUP: dict = _geo_data.get("CITY_COORDS", {})
+    _CITY_TO_REGION_RAW: dict = _geo_data.get("CITY_TO_REGION", {})
+
+_REGION_ID_TO_HEBREW = {
+    "NORTH": "צפון", "CENTER": "מרכז", "SOUTH": "דרום",
+    "JERUSALEM": "ירושלים", "WEST_BANK": "יהודה ושומרון",
+}
+_CITY_REGION_LOOKUP: dict[str, str] = {}
+for _rid, _rcities in _CITY_TO_REGION_RAW.items():
+    _heb = _REGION_ID_TO_HEBREW.get(_rid)
+    if _heb:
+        for _c in _rcities:
+            _CITY_REGION_LOOKUP[_c] = _heb
 
 # Allow connections from any origin
 app.add_middleware(
@@ -80,8 +93,10 @@ latest_event = {
 channel_last_areas = {}      # Track last areas mentioned by channel to group updates
 active_alerts_by_area = {}   # Track current active alerts per individual area
 active_oref_alerts: list = []    # [{id, cities, msg_dt}] from PikudHaOref_all siren messages
-active_mivzak: dict = {}         # {region: [cities]} built dynamically via TACTICAL_REGION_MAPPING
-active_mivzak_polygons: dict = {}  # {region: [[lat,lon], ...]} tight polygons from מבזק cities
+active_mivzak: dict = {}         # {area: [cities]} from מבזק proximity clustering
+active_mivzak_polygons: dict = {}  # {area: [[lat,lon], ...]} tight polygons from מבזק cities
+_mivzak_last_update: datetime | None = None
+MIVZAK_TIMEOUT_SECONDS = 600    # 10 minutes
 _oref_seen_ids: set = set()      # Dedup for independent oref scraper
 _mock_state: dict = {"key": None, "target_time": None}
 
@@ -423,6 +438,42 @@ def compute_smooth_polygon(place_names, buf=0.04):
     return _smooth_polygon(buffered)
 
 
+def _cluster_by_proximity(city_coords: list[tuple[str, float, float]],
+                          max_dist: float = 0.25) -> list[list[str]]:
+    """Single-linkage clustering of cities by geographic distance.
+
+    max_dist: ~0.25 degrees ≈ 28km at Israel's latitude.
+    Returns list of city-name groups.
+    """
+    n = len(city_coords)
+    if n == 0:
+        return []
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        pa, pb = find(a), find(b)
+        if pa != pb:
+            parent[pa] = pb
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            _, lat1, lon1 = city_coords[i]
+            _, lat2, lon2 = city_coords[j]
+            if ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5 <= max_dist:
+                union(i, j)
+
+    groups: dict[int, list[str]] = {}
+    for i, (name, _, _) in enumerate(city_coords):
+        groups.setdefault(find(i), []).append(name)
+    return list(groups.values())
+
+
 def clean_hebrew_city(city_name):
     """Clean government city DB noise (like parentheses or double spaces)"""
     name = re.sub(r'\(.*?\)', '', city_name)
@@ -723,29 +774,53 @@ def _region_from_lat(lat: float) -> str:
 
 
 def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], dict[str, list]]:
-    """Build {region: [cities]} and {region: polygon} from מבזק city list.
+    """Build {area: [cities]} and {area: polygon} from מבזק city list.
 
-    Looks up each city in CITY_COORDS_LOOKUP (with suffix fallback),
-    groups by latitude into broad regions (צפון/מרכז/דרום),
-    then computes a tight polygon per region.
+    Clusters cities by geographic proximity (~30km threshold) and computes
+    a tight polygon per cluster. Each cluster is labeled by the majority
+    region of its cities (for frontend handoff to forecast areas).
     """
-    replacements: dict[str, list[str]] = {}
+    city_coords = []
     for city in cities:
         coords = _resolve_city_coords(city)
         if coords:
             lat = coords[0] if isinstance(coords, (list, tuple)) else coords
-            region = _region_from_lat(lat)
-            replacements.setdefault(region, []).append(city)
+            lon = coords[1] if isinstance(coords, (list, tuple)) else 0
+            city_coords.append((city, lat, lon))
+
+    if not city_coords:
+        return {}, {}
+
+    clusters = _cluster_by_proximity(city_coords)
+
+    replacements: dict[str, list[str]] = {}
     polygons: dict[str, list] = {}
-    for region, region_cities in replacements.items():
-        poly = compute_smooth_polygon(region_cities)
+
+    for cluster_cities in clusters:
+        region_votes: dict[str, int] = {}
+        for city in cluster_cities:
+            region = (_CITY_REGION_LOOKUP.get(city)
+                      or TACTICAL_REGION_MAPPING.get(city))
+            if region:
+                region_votes[region] = region_votes.get(region, 0) + 1
+
+        if region_votes:
+            area_name = max(region_votes, key=region_votes.get)
+        else:
+            coords = _resolve_city_coords(cluster_cities[0])
+            area_name = _region_from_lat(coords[0]) if coords else "אזור לא ידוע"
+
+        replacements[area_name] = cluster_cities
+        poly = compute_smooth_polygon(cluster_cities)
         if poly:
-            polygons[region] = poly
+            polygons[area_name] = poly
+
     return replacements, polygons
 
 
 def merge_mivzak(replacements: dict[str, list[str]]):
     """Merge mivzak data into active state, accumulating cities across messages."""
+    global _mivzak_last_update
     for region, cities in replacements.items():
         existing = active_mivzak.get(region, [])
         active_mivzak[region] = list(dict.fromkeys(existing + cities))
@@ -754,6 +829,7 @@ def merge_mivzak(replacements: dict[str, list[str]]):
         poly = compute_smooth_polygon(cities)
         if poly:
             active_mivzak_polygons[region] = poly
+    _mivzak_last_update = datetime.now(local_tz)
 
 
 # ==========================
@@ -1505,7 +1581,7 @@ async def oref_polling_loop():
     Scrapes the public page, parses messages with TelegramPageParser,
     and processes siren alerts, מבזק early warnings, and all-clear events.
     """
-    global active_oref_alerts, active_mivzak
+    global active_oref_alerts, active_mivzak, _mivzak_last_update
     url = OREF_URL
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -1556,12 +1632,19 @@ async def oref_polling_loop():
                         if "האירוע הסתיים" in text:
                             active_mivzak.clear()
                             active_mivzak_polygons.clear()
+                            _mivzak_last_update = None
 
                     # Expire old alerts
                     active_oref_alerts = [
                         a for a in active_oref_alerts
                         if (now - a["msg_dt"]).total_seconds() <= 300
                     ]
+
+                    # Expire stale mivzak data
+                    if _mivzak_last_update and (now - _mivzak_last_update).total_seconds() > MIVZAK_TIMEOUT_SECONDS:
+                        active_mivzak.clear()
+                        active_mivzak_polygons.clear()
+                        _mivzak_last_update = None
                     # Trim dedup set
                     if len(_oref_seen_ids) > MAX_SEEN_IDS_PER_CHANNEL:
                         _oref_seen_ids.clear()
