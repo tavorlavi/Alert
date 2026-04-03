@@ -1347,15 +1347,17 @@
             }
         }
 
-        function sendNotification(title, body) {
+        async function sendNotification(title, body) {
             if (notificationPermission !== 'granted') return;
             if (document.visibilityState === 'visible') return;
             try {
-                new Notification(title, {
+                const reg = await navigator.serviceWorker.ready;
+                await reg.showNotification(title, {
                     body: body,
                     icon: '/icon.svg',
                     tag: 'air-command-alert',
-                    renotify: true
+                    renotify: true,
+                    data: { url: '/' }
                 });
             } catch (e) { console.error('Notification failed', e); }
         }
@@ -1365,7 +1367,15 @@
 
         // Register service worker for background fetch
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(() => {});
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('SW registered, scope:', reg.scope))
+                .catch(err => console.error('SW registration failed:', err));
+
+            // Periodically poke SW to keep it alive (iOS kills SWs aggressively)
+            setInterval(async () => {
+                const reg = await navigator.serviceWorker.ready;
+                if (reg.active) reg.active.postMessage('start-polling');
+            }, 30000);
         }
 
         function tickClock() {

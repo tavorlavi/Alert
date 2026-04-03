@@ -1,17 +1,18 @@
 {
   "name": "Air Command Alert System",
   "short_name": "Air Command",
-  "start_url": ".",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#020805",
   "theme_color": "#020805",
   "description": "Early Warning & Intercept System",
   "icons": [
     {
-      "src": "icon.svg",
+      "src": "/icon.svg",
       "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "type": "image/svg+xml"
     }
   ]
 }
