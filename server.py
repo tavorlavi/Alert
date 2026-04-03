@@ -94,6 +94,9 @@ MAX_HISTORY = 50
 # ==========================
 today_forecasts = []      # All "צפי" messages from today: [{text, target_time, received_at, raw_text}]
 today_messages = []       # ALL messages from the channel today (for display)
+MAX_TODAY_MESSAGES = 500
+MAX_TODAY_FORECASTS = 300
+MAX_SEEN_IDS_PER_CHANNEL = 2000
 PENDING_COMBINE_WINDOW_MINUTES = 5  # window to merge separate time/area messages
 
 # Pending partial forecasts per channel when time and areas arrive in separate messages
@@ -983,6 +986,8 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                 "date": msg_dt.isoformat(),
                 "id": msg_id,
             })
+            if len(today_messages) > MAX_TODAY_MESSAGES:
+                today_messages[MAX_TODAY_MESSAGES:] = []
 
         extracted = extract_forecast_data(text)
         display_text = extracted.get("clean_text") or clean_forecast_text(text)
@@ -1098,6 +1103,8 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
                         "areas": [area],
                         "source_channel": channel_name,
                     })
+                    if len(today_forecasts) > MAX_TODAY_FORECASTS:
+                        today_forecasts[:] = today_forecasts[-MAX_TODAY_FORECASTS:]
 
         # Deduplicate history areas
         forecast_areas_for_history = list(dict.fromkeys(forecast_areas_for_history))
@@ -1263,6 +1270,12 @@ async def telegram_polling_loop():
         # Rebuild latest_event once after all channels, not per-channel
         if any_new:
             _rebuild_latest_event()
+
+        # Trim dedup sets to prevent unbounded memory growth
+        for ch_name in telegram_last_seen_ids:
+            s = telegram_last_seen_ids[ch_name]
+            if len(s) > MAX_SEEN_IDS_PER_CHANNEL:
+                telegram_last_seen_ids[ch_name] = set(sorted(s, key=int, reverse=True)[:MAX_SEEN_IDS_PER_CHANNEL])
 
 @app.get("/api/latest")
 async def get_latest_event(mock: bool = False, tactical: str = None, minutes: float = 5):
@@ -1549,6 +1562,9 @@ async def oref_polling_loop():
                         a for a in active_oref_alerts
                         if (now - a["msg_dt"]).total_seconds() <= 300
                     ]
+                    # Trim dedup set
+                    if len(_oref_seen_ids) > MAX_SEEN_IDS_PER_CHANNEL:
+                        _oref_seen_ids.clear()
             except Exception as e:
                 print(f"Oref polling error: {e}")
             await asyncio.sleep(OREF_POLL_INTERVAL)
