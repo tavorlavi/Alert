@@ -847,7 +847,12 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
     if not city_polys:
         return {}, {}
 
-    union = unary_union(city_polys)
+    # Buffer slightly to close gaps between adjacent Voronoi cells
+    buffered = [p.buffer(0.005) for p in city_polys]
+    union = unary_union(buffered).buffer(-0.003)
+
+    if union.is_empty:
+        return {}, {}
 
     result_polys = list(union.geoms) if isinstance(union, MultiPolygon) else [union]
 
@@ -871,16 +876,21 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
 
 
 def merge_mivzak(replacements: dict[str, list[str]]):
-    """Merge mivzak data into active state, accumulating cities across messages."""
+    """Merge mivzak data into active state, accumulating cities across messages.
+
+    Collects ALL accumulated cities and recomputes Voronoi union polygons.
+    """
     global _mivzak_last_update
     for region, cities in replacements.items():
         existing = active_mivzak.get(region, [])
         active_mivzak[region] = list(dict.fromkeys(existing + cities))
-    # Recompute polygons with merged city lists
-    for region, cities in active_mivzak.items():
-        poly = compute_smooth_polygon(cities)
-        if poly:
-            active_mivzak_polygons[region] = poly
+    # Recompute from all accumulated cities
+    all_cities = [c for cl in active_mivzak.values() for c in cl]
+    new_replacements, new_polygons = build_mivzak_replacements(all_cities)
+    active_mivzak.clear()
+    active_mivzak.update(new_replacements)
+    active_mivzak_polygons.clear()
+    active_mivzak_polygons.update(new_polygons)
     _mivzak_last_update = datetime.now(local_tz)
 
 
@@ -1454,7 +1464,7 @@ async def get_latest_event(mock: bool = False, tactical: str = None, minutes: fl
         return {
             "has_data": True,
             "text": text,
-            "received_at": now.isoformat(),
+            "received_at": _mock_state["start_time"],
             "target_time": target_dt.isoformat(),
             "alerts": [alert],
             "mivzak_replacements": active_mivzak if mivzak_ready else {},
