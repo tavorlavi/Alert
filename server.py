@@ -11,6 +11,8 @@ import os
 from html.parser import HTMLParser
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from shapely.geometry import Polygon, MultiPolygon
+from shapely.ops import unary_union
 
 # Load .env file for local development (ignored in production)
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -52,7 +54,9 @@ TELEGRAM_CHANNELS = {
     "aharonyediotnews": {
         "url": "https://t.me/s/aharonyediotnews",
         "type": "forecast",
-        "label": "אהרון ידיעות"
+        "label": "אהרון ידיעות",
+        "signature": r'\*?🚨אהרון ידיעות.*',
+        "news_filter": True
     },
     "fekalshigurim": {
         "url": "https://t.me/s/fekalshigurim",
@@ -83,6 +87,11 @@ for _rid, _rcities in _CITY_TO_REGION_RAW.items():
     if _heb:
         for _c in _rcities:
             _CITY_REGION_LOOKUP[_c] = _heb
+
+# Load per-city Voronoi polygons for מבזק rendering
+_area_poly_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "area_polygons.json")
+with open(_area_poly_file) as _f:
+    AREA_POLYGONS: dict = json.load(_f)
 
 # Allow connections from any origin
 app.add_middleware(
@@ -140,9 +149,38 @@ def clean_forecast_text(text):
     """Remove URLs and extra whitespace from forecast display text."""
     # Remove Telegram URLs (with or without https:// prefix)
     text = re.sub(r'(?:https?://)?t\.me/\S*', '', text)
-    # Remove extra newlines and whitespace  
+    # Remove extra newlines and whitespace
     text = re.sub(r'\n{2,}', '\n', text).strip()
     return text
+
+def strip_channel_signature(text, channel_config):
+    """Remove channel-specific signature/footer from message text."""
+    sig = channel_config.get("signature")
+    if sig:
+        text = re.sub(sig, '', text, flags=re.DOTALL).strip()
+    return text
+
+# Whitelist patterns for alert messages from news-hybrid channels.
+# Messages that don't match any pattern are treated as news and skipped.
+_NEWS_ALERT_PATTERNS = [
+    re.compile(r'שיגור(?:ים)?\s+(?:מ|נוסף|גם|כעת)'),
+    re.compile(r'צפי\s+הגעה'),
+    re.compile(r'להתמגן'),
+    re.compile(r'(?:כעת|עכשיו)\s+אזעק'),
+    re.compile(r'אזעק(?:ות|ה)\s+(?:ב|גם|צפויות|נוספת)'),
+    re.compile(r'מטח(?:ים)?\s+(?:נוספים|כבד)'),
+    re.compile(r'ירי\s+מ(?:לבנון|איראן|תימן|רצועת)'),
+    re.compile(r'פוליגון'),
+    re.compile(r'ראשוני(?![א-ת])'),
+    re.compile(r'יגיע\s+(?:ב|עוד)'),
+    re.compile(r'^גם\s+[לב]'),
+    re.compile(r'זיהוי\s+מאוחר'),
+    re.compile(r'התרעות\s+הופעלו'),
+]
+
+def is_news_channel_alert(text):
+    """Check if a message from a news-hybrid channel is an actual alert."""
+    return any(p.search(text) for p in _NEWS_ALERT_PATTERNS)
 
 _MINUTE_UNITS = ("דקות", "דקה", "דק")
 _SECOND_UNITS = ("שניות", "שניה")
@@ -448,41 +486,6 @@ def compute_smooth_polygon(place_names, buf=0.04):
     return _smooth_polygon(buffered)
 
 
-def _cluster_by_proximity(city_coords: list[tuple[str, float, float]],
-                          max_dist: float = 0.25) -> list[list[str]]:
-    """Single-linkage clustering of cities by geographic distance.
-
-    max_dist: ~0.25 degrees ≈ 28km at Israel's latitude.
-    Returns list of city-name groups.
-    """
-    n = len(city_coords)
-    if n == 0:
-        return []
-    parent = list(range(n))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a, b):
-        pa, pb = find(a), find(b)
-        if pa != pb:
-            parent[pa] = pb
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            _, lat1, lon1 = city_coords[i]
-            _, lat2, lon2 = city_coords[j]
-            if ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5 <= max_dist:
-                union(i, j)
-
-    groups: dict[int, list[str]] = {}
-    for i, (name, _, _) in enumerate(city_coords):
-        groups.setdefault(find(i), []).append(name)
-    return list(groups.values())
-
 
 def clean_hebrew_city(city_name):
     """Clean government city DB noise (like parentheses or double spaces)"""
@@ -737,7 +740,14 @@ def parse_oref_siren_cities(text: str) -> list[str] | None:
             continue
         line = re.sub(r'\s*\([^)]+\)\s*$', '', line).strip()
         if line:
-            cities.extend(c.strip() for c in line.split(',') if c.strip())
+            raw_parts = [c.strip() for c in line.split(',') if c.strip()]
+            merged = []
+            for part in raw_parts:
+                if len(part) <= 3 and merged and ' - ' in merged[-1]:
+                    merged[-1] += ',' + part
+                else:
+                    merged.append(part)
+            cities.extend(merged)
     return cities if cities else None
 
 
@@ -759,10 +769,28 @@ def parse_oref_mivzak(text: str) -> list[str] | None:
         if (line.startswith("\U0001f6a8")
                 or (line.startswith("אזור ") and ',' not in line)
                 or "בדקות הקרובות" in line or "על תושבי" in line
-                or "במקרה של" in line or "היכנסו למרחב" in line):
+                or "במקרה של" in line or "היכנסו למרחב" in line
+                or "לשפר את המיקום" in line or "לשהות בו" in line):
             continue
-        cities.extend(c.strip() for c in line.split(',') if c.strip())
+        raw_parts = [c.strip() for c in line.split(',') if c.strip()]
+        merged = []
+        for part in raw_parts:
+            if len(part) <= 3 and merged and ' - ' in merged[-1]:
+                merged[-1] += ',' + part
+            else:
+                merged.append(part)
+        cities.extend(merged)
     return cities if cities else None
+
+
+def _resolve_area_polygon(city: str) -> list | None:
+    """Look up per-city Voronoi polygon from AREA_POLYGONS dataset."""
+    if city in AREA_POLYGONS:
+        return AREA_POLYGONS[city]
+    base = city.split(" - ")[0].strip()
+    if base in AREA_POLYGONS:
+        return AREA_POLYGONS[base]
+    return None
 
 
 def _resolve_city_coords(city: str):
@@ -783,47 +811,61 @@ def _region_from_lat(lat: float) -> str:
     return "דרום"
 
 
+def _label_from_cities(cities: list[str]) -> str:
+    """Derive a region label from a list of cities by majority vote."""
+    votes: dict[str, int] = {}
+    for city in cities:
+        region = _CITY_REGION_LOOKUP.get(city) or TACTICAL_REGION_MAPPING.get(city)
+        if region:
+            votes[region] = votes.get(region, 0) + 1
+    if votes:
+        return max(votes, key=votes.get)
+    coords = _resolve_city_coords(cities[0]) if cities else None
+    return _region_from_lat(coords[0]) if coords else "אזור לא ידוע"
+
+
 def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], dict[str, list]]:
     """Build {area: [cities]} and {area: polygon} from מבזק city list.
 
-    Clusters cities by geographic proximity (~30km threshold) and computes
-    a tight polygon per cluster. Each cluster is labeled by the majority
-    region of its cities (for frontend handoff to forecast areas).
+    Looks up per-city Voronoi polygons from AREA_POLYGONS and unions them
+    with Shapely. If areas are geographically disconnected, produces
+    separate polygon components.
     """
-    city_coords = []
+    city_polys = []
+    matched_cities = []
     for city in cities:
-        coords = _resolve_city_coords(city)
-        if coords:
-            lat = coords[0] if isinstance(coords, (list, tuple)) else coords
-            lon = coords[1] if isinstance(coords, (list, tuple)) else 0
-            city_coords.append((city, lat, lon))
+        poly_coords = _resolve_area_polygon(city)
+        if poly_coords and len(poly_coords) >= 3:
+            try:
+                p = Polygon([(pt[1], pt[0]) for pt in poly_coords])
+                if p.is_valid:
+                    city_polys.append(p)
+                    matched_cities.append(city)
+            except Exception:
+                pass
 
-    if not city_coords:
+    if not city_polys:
         return {}, {}
 
-    clusters = _cluster_by_proximity(city_coords)
+    union = unary_union(city_polys)
+
+    result_polys = list(union.geoms) if isinstance(union, MultiPolygon) else [union]
 
     replacements: dict[str, list[str]] = {}
     polygons: dict[str, list] = {}
 
-    for cluster_cities in clusters:
-        region_votes: dict[str, int] = {}
-        for city in cluster_cities:
-            region = (_CITY_REGION_LOOKUP.get(city)
-                      or TACTICAL_REGION_MAPPING.get(city))
-            if region:
-                region_votes[region] = region_votes.get(region, 0) + 1
-
-        if region_votes:
-            area_name = max(region_votes, key=region_votes.get)
-        else:
-            coords = _resolve_city_coords(cluster_cities[0])
-            area_name = _region_from_lat(coords[0]) if coords else "אזור לא ידוע"
-
-        replacements[area_name] = cluster_cities
-        poly = compute_smooth_polygon(cluster_cities)
-        if poly:
-            polygons[area_name] = poly
+    for poly in result_polys:
+        component_cities = [
+            c for c, cp in zip(matched_cities, city_polys)
+            if poly.intersects(cp)
+        ]
+        area_name = _label_from_cities(component_cities)
+        # Avoid key collisions from multiple components with same label
+        if area_name in replacements:
+            area_name = area_name + f" ({len(replacements) + 1})"
+        replacements[area_name] = component_cities
+        coords = [[lat, lon] for lon, lat in poly.exterior.coords]
+        polygons[area_name] = coords
 
     return replacements, polygons
 
@@ -1063,6 +1105,14 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
 
         text = msg["text"]
         msg_dt = msg["msg_dt"]
+        ch_config = TELEGRAM_CHANNELS.get(channel_name, {})
+
+        # Strip channel-specific signature/footer before processing
+        text = strip_channel_signature(text, ch_config)
+
+        # For news-hybrid channels, skip non-alert messages
+        if ch_config.get("news_filter") and not is_news_channel_alert(text):
+            continue
 
         # Add to today's messages
         exists = any(m.get("id") == msg_id for m in today_messages)
