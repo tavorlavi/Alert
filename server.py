@@ -847,9 +847,9 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
     if not city_polys:
         return {}, {}
 
-    # Buffer slightly to close gaps between adjacent Voronoi cells
-    buffered = [p.buffer(0.005) for p in city_polys]
-    union = unary_union(buffered).buffer(-0.003)
+    # Buffer to close gaps between Voronoi cells, then shrink back
+    buffered = [p.buffer(0.02) for p in city_polys]
+    union = unary_union(buffered).buffer(-0.01)
 
     if union.is_empty:
         return {}, {}
@@ -1479,12 +1479,14 @@ async def get_alert_history():
 @app.get("/api/oref-alerts")
 async def get_oref_alerts(mock: bool = False, oref: str = None, tactical: str = None):
     if mock:
-        if oref:
-            broad_areas = [a.strip() for a in oref.split(",") if a.strip()]
-        elif tactical and _mock_state.get("target_time"):
+        # Delay oref data until target_time (sirens fire at arrival, not at launch)
+        if _mock_state.get("target_time"):
             target_dt = datetime.fromisoformat(_mock_state["target_time"])
             if datetime.now(local_tz) < target_dt:
                 return {"data": [], "title": ""}
+        if oref:
+            broad_areas = [a.strip() for a in oref.split(",") if a.strip()]
+        elif tactical:
             broad_areas = [a.strip() for a in tactical.split(",") if a.strip()]
         else:
             return {"data": [], "title": ""}
