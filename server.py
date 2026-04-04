@@ -345,31 +345,48 @@ MOCK_OREF_MESSAGES = [
         "text": (
             "🚨 מבזק\n"
             "בדקות הקרובות צפויות להתקבל התרעות באזורך\n"
-            "אזור תל אביב\n"
-            "תל אביב, רמת גן, חולון, ראשון לציון, פתח תקווה, הרצליה\n"
-            "אזור מרכז הנגב\n"
-            "באר שבע, דימונה, אשדוד, אשקלון, נתיבות, שדרות, אופקים\n"
-            "אזור שרון\n"
-            "נתניה, כפר סבא\n"
-            "אזור חיפה\n"
-            "חיפה, עכו, נהריה, טבריה, צפת, כרמיאל, קרית שמונה"
+            "אזור דן\n"
+            "תל אביב - דרום העיר ויפו, תל אביב - מזרח, תל אביב - מרכז העיר, תל אביב - עבר הירקון, "
+            "רמת גן - מזרח, רמת גן - מערב, חולון, בת ים, גבעתיים, בני ברק, פתח תקווה, "
+            "הרצליה - מערב, הרצליה - מרכז וגליל ים, רמת השרון, כפר שמריהו, קריית אונו, גבעת שמואל, אור יהודה\n"
+            "אזור השרון\n"
+            "נתניה, כפר סבא, רעננה, הוד השרון, כפר יונה, אבן יהודה"
         ),
-        "id": "mock_mivzak_1",
+        "id": "mock_mivzak_center",
+    },
+    {
+        "text": (
+            "🚨 מבזק\n"
+            "בדקות הקרובות צפויות להתקבל התרעות באזורך\n"
+            "אזור חיפה\n"
+            "חיפה - מערב, חיפה - כרמל, הדר ועיר תחתית, חיפה - נווה שאנן ורמות כרמל, "
+            "חיפה - קריית חיים ושמואל, חיפה - מפרץ, חיפה - בת גלים ק.אליעזר, "
+            "עכו, עכו - רמות ים, נהריה, כרמיאל, נצרת, עפולה, מגדל העמק, טבריה, "
+            "צפת - עיר, צפת - נוף כנרת, קריית שמונה"
+        ),
+        "id": "mock_mivzak_north",
+    },
+    {
+        "text": (
+            "🚨 מבזק\n"
+            "בדקות הקרובות צפויות להתקבל התרעות באזורך\n"
+            "אזור לכיש\n"
+            "אשדוד - א,ב,ד,ה, אשדוד - ג,ו,ז, אשדוד - ח,ט,י,יג,יד,טז, "
+            "אשקלון - דרום, אשקלון - צפון, קריית גת, קריית מלאכי, נתיבות, שדרות, אופקים\n"
+            "אזור דרום הנגב\n"
+            "באר שבע - צפון, באר שבע - דרום, באר שבע - מזרח, באר שבע - מערב, דימונה"
+        ),
+        "id": "mock_mivzak_south",
     },
     {
         "text": (
             "🚨 ירי רקטות וטילים\n"
-            "אזור תל אביב\n"
-            "תל אביב, רמת גן, חולון (דקה וחצי)\n"
-            "ראשון לציון, פתח תקווה, הרצליה (דקה)\n"
-            "אזור מרכז הנגב\n"
-            "באר שבע, דימונה, אשדוד (דקה וחצי)\n"
-            "אשקלון, נתיבות, שדרות, אופקים (דקה)\n"
-            "אזור שרון\n"
-            "נתניה, כפר סבא (דקה וחצי)\n"
+            "אזור דן\n"
+            "תל אביב - דרום העיר ויפו, תל אביב - מזרח, רמת גן - מזרח, חולון, בת ים, בני ברק (דקה וחצי)\n"
             "אזור חיפה\n"
-            "חיפה, עכו, נהריה (דקה וחצי)\n"
-            "טבריה, צפת, כרמיאל, קרית שמונה (דקה)\n"
+            "חיפה - מערב, חיפה - כרמל, הדר ועיר תחתית, עכו, נהריה (דקה וחצי)\n"
+            "אזור לכיש\n"
+            "אשדוד - א,ב,ד,ה, אשקלון - דרום, באר שבע - צפון (דקה)\n"
             "היכנסו למרחב המוגן."
         ),
         "id": "mock_siren_1",
@@ -784,12 +801,31 @@ def parse_oref_mivzak(text: str) -> list[str] | None:
 
 
 def _resolve_area_polygon(city: str) -> list | None:
-    """Look up per-city Voronoi polygon from AREA_POLYGONS dataset."""
+    """Look up per-city Voronoi polygon from AREA_POLYGONS dataset.
+
+    Tries exact match, then suffix-stripped match, then collects all
+    sub-area polygons for cities like "תל אביב" that only have
+    "תל אביב - דרום העיר ויפו" etc.
+    """
     if city in AREA_POLYGONS:
         return AREA_POLYGONS[city]
     base = city.split(" - ")[0].strip()
     if base in AREA_POLYGONS:
         return AREA_POLYGONS[base]
+    # Collect all sub-area polygons matching "base - *" and union them
+    prefix = base + " - "
+    sub_polys = [
+        Polygon([(p[1], p[0]) for p in AREA_POLYGONS[k]])
+        for k in AREA_POLYGONS
+        if k.startswith(prefix) and len(AREA_POLYGONS[k]) >= 3
+    ]
+    if sub_polys:
+        merged = unary_union(sub_polys)
+        if not merged.is_empty and hasattr(merged, 'exterior'):
+            return [[lat, lon] for lon, lat in merged.exterior.coords]
+        elif isinstance(merged, MultiPolygon):
+            biggest = max(merged.geoms, key=lambda g: g.area)
+            return [[lat, lon] for lon, lat in biggest.exterior.coords]
     return None
 
 
@@ -855,6 +891,8 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
         return {}, {}
 
     result_polys = list(union.geoms) if isinstance(union, MultiPolygon) else [union]
+    # Sort largest first so the biggest component gets the base region name
+    result_polys.sort(key=lambda p: p.area, reverse=True)
 
     replacements: dict[str, list[str]] = {}
     polygons: dict[str, list] = {}
@@ -865,7 +903,6 @@ def build_mivzak_replacements(cities: list[str]) -> tuple[dict[str, list[str]], 
             if poly.intersects(cp)
         ]
         area_name = _label_from_cities(component_cities)
-        # Avoid key collisions from multiple components with same label
         if area_name in replacements:
             area_name = area_name + f" ({len(replacements) + 1})"
         replacements[area_name] = component_cities
@@ -1617,15 +1654,43 @@ async def debug_load_messages():
 
         print(f"🐞 DEBUG: Done! alert_history has {len(alert_history)} entries.")
 
-        # Load mock oref mivzak data only (not siren alerts, to avoid fake green dots)
+        # Fetch real mivzak data from PikudHaOref_all
         global active_mivzak
-        for mock_msg in MOCK_OREF_MESSAGES:
-            text = mock_msg["text"]
-            mivzak_cities = parse_oref_mivzak(text)
-            if mivzak_cities:
-                replacements, _ = build_mivzak_replacements(mivzak_cities)
-                merge_mivzak(replacements)
-        print(f"🐞 DEBUG: Loaded mivzak data from {len(MOCK_OREF_MESSAGES)} mock oref messages.")
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as client:
+                resp = await client.get(OREF_URL, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                })
+                if resp.status_code == 200:
+                    parser = TelegramPageParser()
+                    parser.feed(resp.text)
+                    now = datetime.now(local_tz)
+                    mivzak_count = 0
+                    for msg in parser.messages:
+                        text = msg.get("text", "").strip()
+                        if not text:
+                            continue
+                        try:
+                            msg_dt = datetime.fromisoformat(
+                                msg.get("datetime", "").replace("Z", "+00:00")
+                            ).astimezone(local_tz)
+                        except Exception:
+                            msg_dt = now
+                        if (now - msg_dt).total_seconds() > 600:
+                            continue
+                        mivzak_cities = parse_oref_mivzak(text)
+                        if mivzak_cities:
+                            replacements, _ = build_mivzak_replacements(mivzak_cities)
+                            merge_mivzak(replacements)
+                            mivzak_count += 1
+                        if "האירוע הסתיים" in text:
+                            active_mivzak.clear()
+                            active_mivzak_polygons.clear()
+                    print(f"🐞 DEBUG: Fetched {len(parser.messages)} oref messages, processed {mivzak_count} מבזק")
+                else:
+                    print(f"🐞 DEBUG: Oref fetch failed: {resp.status_code}")
+        except Exception as e:
+            print(f"🐞 DEBUG: Oref fetch error: {e}")
 
     except Exception as e:
         import traceback

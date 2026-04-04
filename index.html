@@ -1493,7 +1493,21 @@
             const officialAreas = new Set(orefData.data || []);
             const forecastAreas = window.urgentCities || new Set();
             const activeAreas = new Set();
-            const mivzakCities = window.mivzakCityLists || {};
+            const rawMivzak = window.mivzakCityLists || {};
+            // Build fuzzy lookup: map base area name → best matching key (most cities)
+            const mivzakCities = new Proxy(rawMivzak, {
+                get(target, prop) {
+                    if (prop in target) return target[prop];
+                    const prefix = prop + ' (';
+                    let best = null, bestLen = 0;
+                    for (const k of Object.keys(target)) {
+                        if (k.startsWith(prefix) && target[k].length > bestLen) {
+                            best = target[k]; bestLen = target[k].length;
+                        }
+                    }
+                    return best;
+                }
+            });
 
             // 1. Green city markers for oref-confirmed cities
             officialAreas.forEach(city => {
@@ -1954,8 +1968,25 @@
                 window.mivzakCityLists = mivzakReplacements;
                 if (Object.keys(mivzakPolygons).length > 0) {
                     window.urgentCities.forEach(area => {
-                        if (mivzakPolygons[area]) {
-                            window.urgentCityPolygons.set(area, mivzakPolygons[area]);
+                        // Exact match first, then prefix match for numbered keys like "מרכז (15)"
+                        let matchedPoly = mivzakPolygons[area];
+                        if (!matchedPoly) {
+                            const prefix = area + ' (';
+                            let bestKey = null;
+                            let bestLen = 0;
+                            for (const key of Object.keys(mivzakPolygons)) {
+                                if (key === area || key.startsWith(prefix)) {
+                                    const cities = mivzakReplacements[key] || [];
+                                    if (cities.length > bestLen) {
+                                        bestLen = cities.length;
+                                        bestKey = key;
+                                    }
+                                }
+                            }
+                            if (bestKey) matchedPoly = mivzakPolygons[bestKey];
+                        }
+                        if (matchedPoly) {
+                            window.urgentCityPolygons.set(area, matchedPoly);
                         }
                     });
                 }

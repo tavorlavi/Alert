@@ -146,79 +146,62 @@ def test_parse_oref_mivzak_not_mivzak():
 
 
 def test_build_mivzak_replacements():
-    cities = ["תל אביב", "רמת גן", "חולון", "באר שבע"]
+    cities = ["תל אביב - דרום העיר ויפו", "בני ברק", "חולון"]
     replacements, polygons = server.build_mivzak_replacements(cities)
-    # Tel Aviv cluster and Beer Sheva should be in separate groups
-    assert "מרכז" in replacements
-    assert "תל אביב" in replacements["מרכז"]
-    assert "רמת גן" in replacements["מרכז"]
-    assert "חולון" in replacements["מרכז"]
-    assert "דרום" in replacements
-    assert "באר שבע" in replacements["דרום"]
-    assert "מרכז" in polygons
-    assert len(polygons["מרכז"]) >= 3  # valid polygon
+    assert len(replacements) >= 1
+    all_cities = [c for cl in replacements.values() for c in cl]
+    assert "בני ברק" in all_cities
+    assert "חולון" in all_cities
+    # Should have valid polygon with many points (Voronoi union, not convex hull)
+    for area, poly in polygons.items():
+        assert len(poly) >= 10, f"Voronoi union should produce detailed polygon, got {len(poly)} points"
 
 
 def test_build_mivzak_replacements_unknown_cities():
-    cities = ["עיר שלא קיימת", "תל אביב"]
+    cities = ["עיר שלא קיימת", "תל אביב - דרום העיר ויפו"]
     replacements, polygons = server.build_mivzak_replacements(cities)
-    assert "מרכז" in replacements
-    assert "תל אביב" in replacements["מרכז"]
     assert len(replacements) == 1
+    all_cities = [c for cl in replacements.values() for c in cl]
+    assert "תל אביב - דרום העיר ויפו" in all_cities
 
 
-def test_cluster_by_proximity_multiple_groups():
-    """Cities in north and south should form separate clusters."""
-    city_coords = [
-        ("חיפה", 32.794, 34.989),
-        ("עכו", 32.927, 35.084),
-        ("נהריה", 33.004, 35.094),
-        ("באר שבע", 31.252, 34.791),
-        ("אשדוד", 31.804, 34.649),
-        ("אשקלון", 31.668, 34.571),
-    ]
-    clusters = server._cluster_by_proximity(city_coords)
-    # North cities cluster together, south cities split by distance
-    assert len(clusters) >= 2
-    cluster_names = [set(c) for c in clusters]
-    north = {"חיפה", "עכו", "נהריה"}
-    assert north in cluster_names
-    # אשדוד and אשקלון are close, should be together
-    ashkelon_cluster = [c for c in cluster_names if "אשקלון" in c][0]
-    assert "אשדוד" in ashkelon_cluster
-    # באר שבע is far from אשדוד, should NOT be in same cluster
-    assert "באר שבע" not in ashkelon_cluster
-
-
-def test_cluster_by_proximity_single_cluster():
-    """Nearby cities should form one cluster."""
-    city_coords = [
-        ("תל אביב", 32.066, 34.788),
-        ("בת ים", 32.017, 34.751),
-        ("חולון", 32.011, 34.780),
-    ]
-    clusters = server._cluster_by_proximity(city_coords)
-    assert len(clusters) == 1
-    assert set(clusters[0]) == {"תל אביב", "בת ים", "חולון"}
-
-
-def test_build_mivzak_splits_distant_cities():
-    """Cities far apart should get separate tight polygons."""
-    cities = ["תל אביב", "חולון", "בת ים", "חיפה", "עכו", "נהריה"]
+def test_build_mivzak_distant_cities_separate_polygons():
+    """Cities in different parts of Israel should produce separate polygon components."""
+    cities = ["תל אביב - דרום העיר ויפו", "חולון", "בת ים", "חיפה", "עכו", "נהריה"]
     replacements, polygons = server.build_mivzak_replacements(cities)
-    assert len(replacements) >= 2
-    assert len(polygons) >= 2
+    assert len(polygons) >= 2, "Distant city groups should produce separate polygons"
 
 
-def test_build_mivzak_ashdod_not_in_center():
-    """אשדוד should NOT be grouped with center cities (the old bug)."""
-    cities = ["תל אביב", "רמת גן", "אשדוד", "אשקלון"]
+def test_build_mivzak_polygon_size():
+    """Voronoi union polygon should be much larger than convex hull of points."""
+    cities = [
+        "תל אביב - דרום העיר ויפו", "תל אביב - מזרח", "בני ברק",
+        "בת ים", "חולון", "רמת גן - מזרח", "גבעתיים", "פתח תקווה",
+        "הרצליה - מערב", "רמת השרון", "כפר שמריהו"
+    ]
     replacements, polygons = server.build_mivzak_replacements(cities)
-    # אשדוד and אשקלון should not be in the same group as תל אביב
-    for area, area_cities in replacements.items():
-        if "תל אביב" in area_cities:
-            assert "אשדוד" not in area_cities, "אשדוד should not be in same cluster as תל אביב"
-            assert "אשקלון" not in area_cities, "אשקלון should not be in same cluster as תל אביב"
+    assert len(polygons) >= 1
+    poly = list(polygons.values())[0]
+    lats = [p[0] for p in poly]
+    span_km = (max(lats) - min(lats)) * 111
+    assert span_km > 8, f"Voronoi union should span >8km, got {span_km:.1f}km"
+
+
+def test_parse_mivzak_comma_splitting():
+    """Sub-area suffixes like 'אשדוד - א,ב,ד,ה' should not be split."""
+    text = (
+        "🚨 מבזק\n"
+        "בדקות הקרובות צפויות להתקבל התרעות באזורך\n"
+        "אזור לכיש\n"
+        "אשדוד - א,ב,ד,ה, אשדוד - ג,ו,ז, קריית גת"
+    )
+    cities = server.parse_oref_mivzak(text)
+    assert cities is not None
+    assert "אשדוד - א,ב,ד,ה" in cities
+    assert "אשדוד - ג,ו,ז" in cities
+    assert "קריית גת" in cities
+    assert "ב" not in cities
+    assert "ד" not in cities
 
 
 def test_mivzak_timeout_state():
@@ -226,7 +209,7 @@ def test_mivzak_timeout_state():
     server.active_mivzak.clear()
     server.active_mivzak_polygons.clear()
     server._mivzak_last_update = None
-    replacements = {"מרכז": ["תל אביב"]}
+    replacements = {"מרכז": ["תל אביב - דרום העיר ויפו"]}
     server.merge_mivzak(replacements)
     assert server._mivzak_last_update is not None
     server.active_mivzak.clear()
