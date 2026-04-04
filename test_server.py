@@ -218,6 +218,49 @@ def test_mivzak_timeout_state():
 
 
 # ==========================
+# 7-day message analysis improvements
+# ==========================
+
+def test_extract_menashe_area():
+    """מנשה should be extracted from KNOWN_AREAS."""
+    r = server.extract_forecast_data("שיגור לשרון/ מנשה/ עמקים\nעוד 4 דקות")
+    areas = [a for al in r.get("alerts", []) for a in al.get("areas", [])]
+    assert "מנשה" in areas
+    assert "שרון" in areas
+    assert "עמקים" in areas
+
+
+def test_extract_event_ended_no_time():
+    """הסתיים messages should not extract time."""
+    r = server.extract_forecast_data("האירוע הסתיים. בעוד 2-4 דקות הודעת שחרור מפקער.")
+    assert r["alerts"] == []
+
+
+def test_extract_without_area_excluded():
+    """ללא <area> should NOT extract that area."""
+    r = server.extract_forecast_data("ללא ירושלים")
+    areas = [a for al in r.get("alerts", []) for a in al.get("areas", [])]
+    assert "ירושלים" not in areas
+
+
+def test_extract_without_partial():
+    """Only the ללא area is removed, others remain."""
+    r = server.extract_forecast_data("שיגור למרכז ולצפון, ללא ירושלים")
+    areas = [a for al in r.get("alerts", []) for a in al.get("areas", [])]
+    assert "מרכז" in areas
+    assert "צפון" in areas
+    assert "ירושלים" not in areas
+
+
+def test_new_known_areas():
+    """New areas added from 7-day analysis should be extracted."""
+    for area in ["מנשה", "ואדי ערה", "גלבוע", "חוף הכרמל", "מטה אשר", "קו העימות", "כנרת"]:
+        r = server.extract_forecast_data(f"שיגור ל{area}")
+        areas = [a for al in r.get("alerts", []) for a in al.get("areas", [])]
+        assert area in areas, f"{area} should be in KNOWN_AREAS"
+
+
+# ==========================
 # Algorithm improvement regression tests
 # ==========================
 

@@ -283,6 +283,8 @@ KNOWN_AREAS = [
     "גליל תחתון", "גליל מערבי", "עוטף", "מירון", "כיש", "שומרון",
     "לכיש", "נגב", "מערב הנגב", "מרכז הנגב",
     "העמקים", "עמקים", "כינרת", "מישור החוף",
+    "מנשה", "ואדי ערה", "יזרעאל", "גלבוע", "חוף הכרמל", "מטה אשר",
+    "קו העימות", "כנרת", "בקעת בית שאן", "עמק חפר", "מודיעין", "הביקעה",
 ]
 
 TACTICAL_REGION_MAPPING = {
@@ -582,6 +584,10 @@ def extract_forecast_data(text):
     """Unify and extract forecast data from a message, returning a list of alerts.
     Each alert is: {"areas": [...], "clock_time": str, "expected_time_text": str, "expected_seconds": int}
     """
+    # Event-ended messages should not extract anything
+    if "הסתיים" in text:
+        return {"raw_text": text, "clean_text": clean_forecast_text(text), "alerts": []}
+
     alerts = []
 
     lines = re.split(r'\n|\.\s+', text)
@@ -637,6 +643,9 @@ def extract_forecast_data(text):
                     # Blank out matched string
                     part = re.sub(pattern, ' ', part)
                         
+        # Remove areas preceded by "ללא" (without) in original text
+        line_areas = [a for a in line_areas if not re.search(r'ללא\s*(?:ו?[בלמה]?)' + a, line)]
+
         if line_areas:
             alerts.append({
                 "areas": line_areas,
@@ -1183,6 +1192,28 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
         # deduplicate maintaining order
         msg_areas = list(dict.fromkeys(msg_areas))
 
+        # Handle cancellation messages: clear channel state
+        cancel_phrases = ["לא יגיע", "כשל", "נכשל", "בוטל", "לא תפעל"]
+        stripped = text.strip()
+        if any(p in stripped for p in cancel_phrases):
+            if channel_name in channel_last_areas:
+                old_areas = channel_last_areas[channel_name].get("areas", [])
+                for area in old_areas:
+                    active_alerts_by_area.pop(area, None)
+                del channel_last_areas[channel_name]
+            continue
+
+        # Handle "כולל"/"גם" follow-ups: merge areas with previous
+        is_followup = stripped.startswith("כולל") or stripped.startswith("גם ")
+        if is_followup and msg_areas:
+            last_info_prev = channel_last_areas.get(channel_name)
+            if last_info_prev:
+                prev_areas = last_info_prev.get("areas", [])
+                merged = list(dict.fromkeys(prev_areas + msg_areas))
+                msg_areas = merged
+                for a in alerts:
+                    a["areas"] = merged
+
         msg_time_info = None
         for a in alerts:
             if a.get("clock_time") or a.get("expected_seconds") is not None:
@@ -1191,7 +1222,7 @@ async def process_forecast_messages(messages, channel_name, is_init=False):
 
         last_info = channel_last_areas.get(channel_name)
         inherited_areas = False
-        
+
         if msg_areas:
             # Inherit TIMING if we have areas but NO timing, and previous message had timing
             if not msg_time_info and last_info:
